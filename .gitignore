@@ -36,6 +36,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+.env.local
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# local file-storage driver (dev only — prod uses Vercel Blob)
+/.uploads/
+
+# local backup-storage driver (dev/test only — prod uses S3/R2, see lib/storage.ts backupStorage)
+/.backups/

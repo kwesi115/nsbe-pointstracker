@@ -1,0 +1,470 @@
+// Prisma schema for the NSBE points tracker.
+// Postgres is the system of record; Excel is generated on demand (see lib/export/).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  EBOARD
+  GENERAL
+  GUEST
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum EventStatus {
+  DRAFT
+  SCHEDULED
+  CANCELED
+}
+
+enum FieldType {
+  SHORT_TEXT
+  LONG_TEXT
+  SELECT
+  MULTI_SELECT
+  NUMBER
+  YES_NO
+  RATING
+  DATE
+}
+
+enum RegistrationSource {
+  FORM
+  MANUAL
+}
+
+enum Classification {
+  FRESHMAN
+  SOPHOMORE
+  JUNIOR
+  SENIOR
+  GRADUATE
+}
+
+enum FileKind {
+  RESUME
+  HOUSE_PROOF
+}
+
+enum Audience {
+  ALL
+  EBOARD_ONLY
+}
+
+enum GroupKind {
+  NSBE_WEEK
+}
+
+enum AwardKind {
+  GAME_COMPETITION
+  MONTHLY_CHAMPION
+  MANUAL
+}
+
+enum ShirtSize {
+  XS
+  S
+  M
+  L
+  XL
+  XXL
+  XXXL
+}
+
+// A chapter. One row for launch ("howard-nsbe"); everything org-scoped below
+// carries an orgId so a second chapter can onboard without a data migration.
+model Org {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String
+  shortName    String
+  logoUrl      String?
+  primaryColor String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  users           User[]
+  events          Event[]
+  eventCategories EventCategory[]
+  eventGroups     EventGroup[]
+  pointAwards     PointAward[]
+  configs         Config[]
+  adminLogs       AdminLog[]
+  uploadedFiles   UploadedFile[]
+  joinCodes       JoinCode[]
+}
+
+// The sole signup security boundary (see lib/joincodes.ts): role is whatever
+// the MATCHED code grants, never whatever the signup UI's picker said. code is
+// bcrypt-hashed, never stored or re-displayed in plaintext after creation.
+model JoinCode {
+  id          String    @id @default(cuid())
+  orgId       String
+  org         Org       @relation(fields: [orgId], references: [id])
+  code        String
+  codeHint    String
+  grantsRole  Role
+  label       String
+  active      Boolean   @default(true)
+  expiresAt   DateTime?
+  maxUses     Int?
+  useCount    Int       @default(0)
+  createdById String?
+  createdBy   User?     @relation("JoinCodeCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  rotatedAt   DateTime?
+
+  @@index([orgId, active])
+}
+
+// passwordHash is nullable: a GUEST row created by registerGuest() has no
+// password at all (not even an unguessable one) — see lib/auth.ts authorize(),
+// which rejects role GUEST / null passwordHash outright, regardless of what's
+// submitted. Every other role always has a hash: self-service signup hashes
+// the chosen password immediately, admin-provisioned accounts get a bcrypt
+// hash of a random setup code (mustChangePassword = true).
+model User {
+  id                 String          @id @default(cuid())
+  orgId              String
+  org                Org             @relation(fields: [orgId], references: [id])
+  email              String
+  passwordHash       String?
+  firstName          String
+  lastName           String
+  studentId          String?
+  classification     Classification?
+  major              String?
+  majorOther         String?
+  membership         String?
+  house              String?
+  phone              String?
+  personalEmail      String?
+  tshirtSize         ShirtSize?
+  role               Role            @default(GENERAL)
+  status             UserStatus      @default(PENDING)
+  mustChangePassword Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  // Self-reported at check-in; only an admin's *VerifiedAt makes it count
+  // toward standings (see lib/points.ts isEligible). Never zeroed out by
+  // rejection — see repo.rejectDues/rejectNational.
+  duesPaidReported Boolean?
+  duesReportedAt   DateTime?
+  duesVerifiedAt   DateTime?
+  duesVerifiedById String?
+  duesRevokedAt    DateTime?
+  duesRevokedById  String?
+  duesRevokedNote  String?
+
+  nationalMemberReported Boolean?
+  nsbeMembershipId       String?
+  nationalVerifiedAt     DateTime?
+  nationalVerifiedById   String?
+  nationalRevokedAt      DateTime?
+  nationalRevokedById    String?
+  nationalRevokedNote    String?
+
+  // Per-user season stamp — set only when duesPaidReported or
+  // nationalMemberReported transitions to true (see lib/points.ts
+  // isEligible / lib/repo.ts setDuesReported/setNationalReported). Bumping
+  // Config.SEASON makes every stored value here stop matching at once, which
+  // is the entire season-rollover mechanism: no script, no bulk update.
+  membershipSeason String?
+
+  // Set whenever classification or major is written (signup, check-in,
+  // /account) — see lib/core-form.ts getMissingFields. The same no-script
+  // rollover mechanism as membershipSeason: a Config.SEASON bump makes every
+  // stored value here stop matching at once, re-arming the classification/
+  // major question at each member's next check-in without touching this row.
+  profileSeason String?
+
+  // Verified is persistent by design — see lib/core-form.ts: once
+  // houseVerifiedAt is set, the check-in form never re-asks.
+  houseVerifiedAt   DateTime?
+  houseVerifiedById String?
+  houseProofFileId  String?
+
+  resumeFileId    String?
+  resumeUpdatedAt DateTime?
+  resumeConsentAt DateTime?
+
+  /**
+   * Displayed on the internal E-Board leaderboard only — see lib/repo.ts getEboardBoardRows.
+   */
+  eboardPosition String?
+
+  registrations      Registration[]
+  createdEvents      Event[]        @relation("EventCreatedBy")
+  openedEvents       Event[]        @relation("EventOpenedBy")
+  adminLogs          AdminLog[]
+  uploadedFiles      UploadedFile[]
+  createdJoinCodes   JoinCode[]     @relation("JoinCodeCreatedBy")
+  finalizedGroups    EventGroup[]   @relation("EventGroupFinalizedBy")
+  pointAwards        PointAward[]   @relation("PointAwardUser")
+  awardedPointAwards PointAward[]   @relation("PointAwardAwardedBy")
+  revokedPointAwards PointAward[]   @relation("PointAwardRevokedBy")
+
+  @@unique([orgId, email])
+  @@index([orgId])
+  @@index([role])
+  @@index([status])
+  @@index([duesVerifiedAt])
+  @@index([nationalVerifiedAt])
+}
+
+// Never publicly addressable — always served through GET /api/files/[id],
+// which checks owner-or-EBOARD. storageKey is a driver-internal handle
+// (local disk path or Blob pathname), never a public URL. See lib/storage.ts.
+model UploadedFile {
+  id           String   @id @default(cuid())
+  orgId        String
+  org          Org      @relation(fields: [orgId], references: [id])
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  kind         FileKind
+  storageKey   String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+
+  @@index([orgId])
+  @@index([userId, kind])
+}
+
+// Replaces the old flat PointSystem (eventType -> points) map. A category
+// carries everything about "what kind of activity is this" that used to be
+// hardcoded: the tier/point value, whether it feeds the Monthly Engagement
+// Champion calculation, and whether it contributes to the internal E-Board
+// track (replacing the old per-event Event.countsForEboard flag — see
+// lib/points.ts eboardAwardFor). Editable at /admin/settings/categories with
+// no deploy required — nothing in lib/points.ts hardcodes a point value.
+model EventCategory {
+  id               String   @id @default(cuid())
+  orgId            String
+  org              Org      @relation(fields: [orgId], references: [id])
+  code             String
+  name             String
+  shortName        String
+  // null for non-tiered categories (NSBE Week, E-Board meeting/retreat).
+  tier             Int?
+  memberPoints     Int
+  examples         String?
+  countsForMonthly Boolean  @default(true)
+  eboardEligible   Boolean  @default(true)
+  audience         Audience @default(ALL)
+  active           Boolean  @default(true)
+  sortOrder        Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  events Event[]
+
+  @@unique([orgId, code])
+  @@index([orgId])
+}
+
+// An NSBE-Week-shaped set of events whose completion bonus is only knowable
+// once the last event in the set closes (see lib/points.ts groupBonusFor —
+// evaluated at read time, nothing here is a stored point value).
+// bonusTiers is data, not code: [{min,max,bonus}, ...] — an admin edits the
+// tiers directly if the week runs long or short a year.
+model EventGroup {
+  id                 String    @id @default(cuid())
+  orgId              String
+  org                Org       @relation(fields: [orgId], references: [id])
+  name               String
+  slug               String
+  kind               GroupKind
+  expectedEventCount Int       @default(5)
+  bonusTiers         Json
+  // Manual override for when a planned event in the set is canceled — the
+  // group settles its bonus against whatever events actually exist rather
+  // than waiting forever for an event that will never happen.
+  finalizedAt        DateTime?
+  finalizedById      String?
+  finalizedBy        User?     @relation("EventGroupFinalizedBy", fields: [finalizedById], references: [id])
+  createdAt          DateTime  @default(now())
+
+  events Event[]
+
+  @@unique([orgId, slug])
+  @@index([orgId])
+}
+
+// Bonuses not tied to a check-in. GAME_COMPETITION and MONTHLY_CHAMPION are
+// capped/deduplicated by their respective @@unique constraint below (Postgres
+// treats NULL as distinct, so each constraint only actually bites on the kind
+// it's named for) — never by application logic alone. MANUAL awards carry
+// neither eventId nor periodMonth and aren't count-limited.
+model PointAward {
+  id          String    @id @default(cuid())
+  orgId       String
+  org         Org       @relation(fields: [orgId], references: [id])
+  userId      String
+  user        User      @relation("PointAwardUser", fields: [userId], references: [id])
+  kind        AwardKind
+  points      Int
+  // Required for GAME_COMPETITION — the @@unique below is the actual +1-per-member-per-event cap.
+  eventId     String?
+  event       Event?    @relation(fields: [eventId], references: [id])
+  // "2026-09" — required for MONTHLY_CHAMPION.
+  periodMonth String?
+  reason      String
+  awardedById String?
+  awardedBy   User?     @relation("PointAwardAwardedBy", fields: [awardedById], references: [id])
+  awardedAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  revokedById String?
+  revokedBy   User?     @relation("PointAwardRevokedBy", fields: [revokedById], references: [id])
+  revokeNote  String?
+
+  @@unique([orgId, userId, kind, eventId])
+  @@unique([orgId, userId, kind, periodMonth])
+  @@index([orgId, userId])
+}
+
+model Event {
+  id              String        @id @default(cuid())
+  orgId           String
+  org             Org           @relation(fields: [orgId], references: [id])
+  slug            String
+  name            String
+  categoryId      String
+  category        EventCategory @relation(fields: [categoryId], references: [id])
+  // Assigns this event to an NSBE-Week-style set — see EventGroup above.
+  groupId         String?
+  group           EventGroup?   @relation(fields: [groupId], references: [id])
+  date            DateTime
+  location        String?
+  description     String?
+  pointsOverride  Int?
+  status          EventStatus   @default(DRAFT)
+  opensAt         DateTime?
+  closesAt        DateTime?
+  // App-layer default is Config.DEFAULT_EVENT_DURATION (see lib/repo.ts
+  // createEvent/updateEvent) — this column default is only a DB-level
+  // fallback for a row inserted outside the app layer.
+  durationMinutes Int           @default(15)
+  openedById      String?
+  openedBy        User?         @relation("EventOpenedBy", fields: [openedById], references: [id])
+  openedAt        DateTime?
+  reopenNote      String?
+  // EBOARD_ONLY events never appear in the member feed, 403 for a GENERAL user
+  // on direct URL, and are excluded from the member leaderboard (see
+  // src/lib/points.ts eboardAwardFor / computeEboardStandings).
+  audience        Audience      @default(ALL)
+  createdById     String?
+  createdBy       User?         @relation("EventCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  fields        FormField[]
+  registrations Registration[]
+  pointAwards   PointAward[]
+
+  @@unique([orgId, slug])
+  @@index([orgId])
+  @@index([status, opensAt, closesAt])
+  @@index([categoryId])
+  @@index([groupId])
+}
+
+model FormField {
+  id       String    @id @default(cuid())
+  eventId  String
+  event    Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  fieldKey String
+  label    String
+  type     FieldType
+  required Boolean   @default(false)
+  options  String[]
+  helpText String?
+  order    Int
+  prefill  String?
+
+  @@unique([eventId, fieldKey])
+}
+
+model Registration {
+  id            String             @id @default(cuid())
+  eventId       String
+  event         Event              @relation(fields: [eventId], references: [id])
+  userId        String
+  user          User               @relation(fields: [userId], references: [id])
+  pointsAwarded Int
+  roleAtTime    Role
+  source        RegistrationSource @default(FORM)
+  note          String?
+  createdAt     DateTime           @default(now())
+
+  // Audit snapshot of the core-form answers at submit time — the User row
+  // stays the live source of truth (see lib/core-form.ts); these columns
+  // just make old rows interpretable. pointsAwarded is NEVER zeroed for
+  // ineligibility — see lib/points.ts isEligible and computeStandings.
+  classificationAtTime   Classification?
+  majorAtTime            String?
+  duesReportedAtTime     Boolean?
+  nationalReportedAtTime Boolean?
+  coreFormVersion        Int?
+  eligibleAtTime         Boolean?
+
+  answers Answer[]
+
+  @@unique([eventId, userId])
+  @@index([userId])
+  @@index([eventId])
+}
+
+// Normalized (fieldKey/value rows) rather than a JSON column so the
+// responses grid and CSV export are plain queries and this stays portable.
+// Multi-select values join with " | ".
+model Answer {
+  id             String       @id @default(cuid())
+  registrationId String
+  registration   Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  fieldKey       String
+  value          String
+
+  @@unique([registrationId, fieldKey])
+}
+
+model Config {
+  id    String @id @default(cuid())
+  orgId String
+  org   Org    @relation(fields: [orgId], references: [id])
+  key   String
+  value String
+
+  @@unique([orgId, key])
+  @@index([orgId])
+}
+
+model AdminLog {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id])
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  target    String?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
+  @@index([createdAt])
+}

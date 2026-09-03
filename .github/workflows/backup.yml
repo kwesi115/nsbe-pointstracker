@@ -1,0 +1,51 @@
+name: Nightly database backup
+
+# Runs scripts/backup-db.ts (pg_dump -> gzip -> backupStorage, then prunes to
+# 7 daily / 4 weekly / 12 monthly — see that file and docs/RECOVERY.md).
+#
+# NOT a Vercel Cron hitting a Route Handler: Vercel's default Node serverless
+# runtime doesn't ship the `pg_dump` binary, so that would fail in
+# production. GitHub Actions' ubuntu-latest runner has `postgresql-client`
+# available via apt, which is what actually makes this work.
+#
+# GitHub Actions cron is UTC-only, no timezone support — 07:00 UTC is
+# 03:00 EDT (summer) / 02:00 EST (winter). Adjust the two `schedule` entries
+# below if you want to track DST exactly instead of drifting by an hour part
+# of the year.
+#
+# To disable temporarily: comment out (or delete) the `schedule:` block
+# below. `workflow_dispatch` stays available either way for a manual run from
+# the Actions tab. To disable without editing this file, use GitHub's own
+# "Disable workflow" button on the workflow's Actions page.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install postgresql-client (pg_dump)
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - run: npm ci
+
+      - name: Run backup
+        run: npm run backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_STORAGE_DRIVER: s3
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          BACKUP_S3_REGION: ${{ secrets.BACKUP_S3_REGION }}
+          BACKUP_S3_ENDPOINT: ${{ secrets.BACKUP_S3_ENDPOINT }}
+          BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}

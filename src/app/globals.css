@@ -1,26 +1,80 @@
 @import "tailwindcss";
 
+/*
+ * Instrument-panel design system. Data (numerals, ranks, countdowns, codes)
+ * is the hero — see AGENTS.md/design brief. Every number in the app uses
+ * --font-mono with tabular figures so columns and countdowns don't jitter.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #0b1533;
+  --ink-soft: #16234e;
+  --signal: #2f5bea;
+  --amber: #ffb627;
+  --alert: #d6224c;
+  --paper: #eef1f9;
+  --line: rgba(11, 21, 51, 0.14);
+  --muted: #5a6485;
+
+  /* Surfaces relative to --paper, for cards/rows on the light page background. */
+  --surface: #ffffff;
+  --surface-sunken: #e4e8f5;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-signal: var(--signal);
+  --color-amber: var(--amber);
+  --color-alert: var(--alert);
+  --color-paper: var(--paper);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "Courier New", monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* Every number in the app: points, ranks, counts, countdowns, codes, timestamps. */
+.numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accessibility floor: a visible focus ring on every interactive element, not
+   just the ones that remember to add one. */
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
