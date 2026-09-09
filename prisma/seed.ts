@@ -42,6 +42,10 @@ import { storage } from "../src/lib/storage";
 // whether this runs via `npm run seed` or directly with tsx.
 loadEnv({ path: ".env.local" });
 
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set");
+}
+
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
