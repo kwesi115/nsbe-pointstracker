@@ -1,11 +1,18 @@
 // Applies a raw .sql file to DATABASE_URL inside a single transaction.
 //
-// Prisma's schema-engine binary (needed by `prisma migrate dev`/`db push`) is
-// blocked by this machine's Windows Application Control policy, so schema
-// changes are written as plain SQL under prisma/migrations/<name>/migration.sql
-// and applied with this script instead of the Prisma CLI.
+// A fallback for an environment where Prisma's schema-engine binary (needed
+// by `prisma migrate dev`/`db push`) is blocked (e.g. by Windows Application
+// Control policy) — schema changes are written as plain SQL under
+// prisma/migrations/<name>/migration.sql and applied with this script
+// instead of the Prisma CLI. Does NOT update Prisma's own migration-tracking
+// table, so don't mix this with `prisma migrate dev`/`deploy` against the
+// same database.
 //
-// Usage: dotenv -e .env -- tsx scripts/db-apply-sql.ts prisma/migrations/0001_init/migration.sql
+// Usage: npm run db:migrate -- prisma/migrations/0001_init/migration.sql
+import { config as loadEnv } from "dotenv";
+loadEnv();
+loadEnv({ path: ".env.local" });
+
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 

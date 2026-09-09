@@ -18,27 +18,9 @@ export function formatDate(d: Date | null): string {
   return format(tz(d), "MMM d, yyyy");
 }
 
-export function formatTime(d: Date | null): string {
-  if (!d) return "—";
-  return format(tz(d), "h:mm a");
-}
-
 export function formatDateTime(d: Date | null): string {
   if (!d) return "—";
   return format(tz(d), "MMM d, yyyy 'at' h:mm a");
-}
-
-export function formatShortDateTime(d: Date | null): string {
-  if (!d) return "—";
-  return format(tz(d), "M/d/yy h:mm a");
-}
-
-export function formatDurationMinutes(minutes: number | null): string {
-  if (minutes === null || minutes === undefined) return "—";
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 /** mm:ss for under an hour, h:mm:ss beyond that — used by countdowns. */

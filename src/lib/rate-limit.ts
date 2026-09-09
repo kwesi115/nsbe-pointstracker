@@ -10,6 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { normalizeEmail } from "./email";
 import { AppError } from "./errors";
 
 export const WINDOW_MS = 15 * 60_000;
@@ -69,7 +70,7 @@ function bump(store: Map<string, Window>, key: string, now: number, windowMs: nu
 export function assertNotRateLimited(email: string, ip: string, now: number = Date.now()): void {
   assertUnderLimit(
     emailAttempts,
-    email.trim().toLowerCase(),
+    normalizeEmail(email),
     EMAIL_ATTEMPT_LIMIT,
     WINDOW_MS,
     now,
@@ -79,13 +80,13 @@ export function assertNotRateLimited(email: string, ip: string, now: number = Da
 }
 
 export function recordFailedAttempt(email: string, ip: string, now: number = Date.now()): void {
-  bump(emailAttempts, email.trim().toLowerCase(), now, WINDOW_MS);
+  bump(emailAttempts, normalizeEmail(email), now, WINDOW_MS);
   bump(ipAttempts, ip, now, WINDOW_MS);
 }
 
 /** Successful login clears the email counter only — the IP counter persists, since it's guarding against spraying across many accounts from one network. */
 export function clearRateLimit(email: string): void {
-  emailAttempts.delete(email.trim().toLowerCase());
+  emailAttempts.delete(normalizeEmail(email));
 }
 
 // ---------------------------------------------------------------------------

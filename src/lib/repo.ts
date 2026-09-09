@@ -21,6 +21,7 @@
 
 import { revalidateTag } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
+import { normalizeEmail } from "@/lib/email";
 import {
   Audience as DbAudience,
   AwardKind as DbAwardKind,
@@ -29,6 +30,7 @@ import {
   EventStatus as DbEventStatus,
   FileKind as DbFileKind,
   GroupKind as DbGroupKind,
+  Permission as DbPermission,
   RegistrationSource as DbSource,
   Role as DbRole,
   ShirtSize as DbShirtSize,
@@ -60,6 +62,7 @@ import {
   computeStandingsWithBreakdowns,
   eboardAwardFor,
   groupBonusFor,
+  isEboardOrAdmin,
   isEligible,
   isGroupComplete,
   isOpen,
@@ -94,6 +97,7 @@ import type {
   Member,
   MemberSummary,
   Org,
+  PermissionName,
   PointAward,
   PointBreakdown,
   Role,
@@ -123,6 +127,20 @@ function roleToDb(r: Role): DbRole {
   if (r === "eboard") return DbRole.EBOARD;
   if (r === "guest") return DbRole.GUEST;
   return DbRole.GENERAL;
+}
+
+function permissionToDb(p: PermissionName): DbPermission {
+  switch (p) {
+    case "verifications_write":
+      return DbPermission.VERIFICATIONS_WRITE;
+  }
+}
+
+function permissionFromDb(p: DbPermission): PermissionName {
+  switch (p) {
+    case DbPermission.VERIFICATIONS_WRITE:
+      return "verifications_write";
+  }
 }
 
 function classificationFromDb(c: DbClassification | null): Classification | "" {
@@ -186,12 +204,6 @@ function awardKindFromDb(k: DbAwardKind): AwardKind {
   if (k === DbAwardKind.GAME_COMPETITION) return "game_competition";
   if (k === DbAwardKind.MONTHLY_CHAMPION) return "monthly_champion";
   return "manual";
-}
-
-function awardKindToDb(k: AwardKind): DbAwardKind {
-  if (k === "game_competition") return DbAwardKind.GAME_COMPETITION;
-  if (k === "monthly_champion") return DbAwardKind.MONTHLY_CHAMPION;
-  return DbAwardKind.MANUAL;
 }
 
 function statusFromDb(s: DbUserStatus): UserStatus {
@@ -484,7 +496,7 @@ async function logAdminAction(
   entry: { actor: string; action: string; target: string; detail?: string },
 ): Promise<void> {
   const actorUser = await tx.user.findUnique({
-    where: { orgId_email: { orgId, email: entry.actor.trim().toLowerCase() } },
+    where: { orgId_email: { orgId, email: normalizeEmail(entry.actor) } },
     select: { id: true },
   });
   await tx.adminLog.create({
@@ -510,6 +522,74 @@ export async function logSystemAdminEvent(
   entry: { actor: string; action: string; target: string; detail?: string },
 ): Promise<void> {
   await logAdminAction(prisma, orgId, entry);
+}
+
+// ---------------------------------------------------------------------------
+// Permission grants — the permissions engine (see prisma/schema.prisma
+// PermissionGrant, lib/permissions.ts). A narrow, revocable capability on top
+// of role: an ADMIN can grant a single GENERAL member one specific EBOARD-
+// gated surface without promoting them. One row per (orgId, userId,
+// permission) — granting after a revoke reuses that row rather than
+// inserting a second one, so the full grant/revoke history for that
+// capability stays on a single row.
+// ---------------------------------------------------------------------------
+
+/** True if `email` currently holds `permission` — checked live, never cached, so a revoke takes effect on the very next request (see lib/permissions.ts requireVerificationsWrite, the only caller today). */
+export async function hasPermission(orgId: string, email: string, permission: PermissionName): Promise<boolean> {
+  const e = normalizeEmail(email);
+  const grant = await prisma.permissionGrant.findFirst({
+    where: { orgId, permission: permissionToDb(permission), revokedAt: null, user: { orgId, email: e } },
+    select: { id: true },
+  });
+  return grant !== null;
+}
+
+/** Every permission `email` currently holds — for an admin-facing display (the member detail page's Permissions panel). */
+export async function getActivePermissions(orgId: string, email: string): Promise<PermissionName[]> {
+  const e = normalizeEmail(email);
+  const grants = await prisma.permissionGrant.findMany({
+    where: { orgId, revokedAt: null, user: { orgId, email: e } },
+    select: { permission: true },
+  });
+  return grants.map((g) => permissionFromDb(g.permission));
+}
+
+export async function grantPermission(orgId: string, email: string, permission: PermissionName, actor: string): Promise<void> {
+  const e = normalizeEmail(email);
+  const a = normalizeEmail(actor);
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+    if (!user) throw new AppError("NOT_FOUND", "Member not found");
+    const actorUser = await tx.user.findUnique({ where: { orgId_email: { orgId, email: a } }, select: { id: true } });
+
+    await tx.permissionGrant.upsert({
+      where: { orgId_userId_permission: { orgId, userId: user.id, permission: permissionToDb(permission) } },
+      create: { orgId, userId: user.id, permission: permissionToDb(permission), grantedById: actorUser?.id ?? null },
+      update: { grantedAt: new Date(), grantedById: actorUser?.id ?? null, revokedAt: null, revokedById: null },
+    });
+    await logAdminAction(tx, orgId, { actor, action: "grant_permission", target: e, detail: permission });
+  });
+}
+
+/** Idempotent — revoking a permission that isn't currently held is a no-op, not an error. */
+export async function revokePermission(orgId: string, email: string, permission: PermissionName, actor: string): Promise<void> {
+  const e = normalizeEmail(email);
+  const a = normalizeEmail(actor);
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+    if (!user) throw new AppError("NOT_FOUND", "Member not found");
+    const existing = await tx.permissionGrant.findUnique({
+      where: { orgId_userId_permission: { orgId, userId: user.id, permission: permissionToDb(permission) } },
+    });
+    if (!existing || existing.revokedAt !== null) return;
+
+    const actorUser = await tx.user.findUnique({ where: { orgId_email: { orgId, email: a } }, select: { id: true } });
+    await tx.permissionGrant.update({
+      where: { id: existing.id },
+      data: { revokedAt: new Date(), revokedById: actorUser?.id ?? null },
+    });
+    await logAdminAction(tx, orgId, { actor, action: "revoke_permission", target: e, detail: permission });
+  });
 }
 
 /**
@@ -623,7 +703,7 @@ export async function getMembers(orgId: string): Promise<Member[]> {
 }
 
 export async function getMember(orgId: string, email: string): Promise<Member | null> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
   return user ? userToMember(user) : null;
 }
@@ -635,20 +715,14 @@ export async function getMemberById(orgId: string, id: string): Promise<Member |
 }
 
 export async function getRole(orgId: string, email: string): Promise<Role> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { role: true } });
   return user ? roleFromDb(user.role) : "general";
 }
 
-export async function getUserStatus(orgId: string, email: string): Promise<UserStatus | null> {
-  const e = email.trim().toLowerCase();
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { status: true } });
-  return user ? statusFromDb(user.status) : null;
-}
-
 /** The internal id behind an email — needed wherever a caller only has a session email but must write a foreign key (e.g. UploadedFile.userId). */
 export async function getUserId(orgId: string, email: string): Promise<string | null> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { id: true } });
   return user?.id ?? null;
 }
@@ -659,7 +733,7 @@ export async function getUserId(orgId: string, email: string): Promise<string | 
  * touches it.
  */
 export async function getAuthRecord(orgId: string, email: string): Promise<AuthRecord | null> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
   return user ? userToAuthRecord(user) : null;
 }
@@ -670,13 +744,6 @@ export const DEFAULT_LEADERBOARD_DISCLAIMER =
 
 /** Config.NATIONAL_MEMBERSHIP_URL's default — nsbe.org's current membership landing page (join + renew), verified live as of this default's introduction. */
 export const DEFAULT_NATIONAL_MEMBERSHIP_URL = "https://nsbe.org/memberships/";
-
-export async function getConfig(orgId: string): Promise<Record<string, string>> {
-  const rows = await prisma.config.findMany({ where: { orgId } });
-  const config: Record<string, string> = {};
-  for (const row of rows) config[row.key] = row.value;
-  return config;
-}
 
 export async function getConfigValue(orgId: string, key: string, fallback = ""): Promise<string> {
   const row = await prisma.config.findUnique({ where: { orgId_key: { orgId, key } } });
@@ -699,7 +766,7 @@ export async function getAdminEmailAllowlist(orgId: string): Promise<string[]> {
   const raw = await getConfigValue(orgId, "ADMIN_EMAIL_ALLOWLIST", "");
   return raw
     .split("|")
-    .map((v) => v.trim().toLowerCase())
+    .map((v) => normalizeEmail(v))
     .filter(Boolean);
 }
 
@@ -717,7 +784,7 @@ export async function getAdminEmailAllowlist(orgId: string): Promise<string[]> {
  * not self-created. See lib/auth.ts authorize(), the only caller.
  */
 export async function isLoginEmailAllowed(orgId: string, email: string): Promise<boolean> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const [domain, allowlist] = await Promise.all([
     getConfigValue(orgId, "ALLOWED_EMAIL_DOMAIN", ""),
     getAdminEmailAllowlist(orgId),
@@ -850,19 +917,7 @@ function invalidateStandings(orgId: string, season: string): void {
   }
 }
 
-/** Same computation as getStandings, but keeps each row's full PointBreakdown — for the leaderboard's row-expand. */
-export async function getStandingsWithBreakdowns(orgId: string): Promise<Array<Standing & { breakdown: PointBreakdown }>> {
-  const [attendance, members, season, awards, groups] = await Promise.all([
-    getAttendance(orgId),
-    getMembers(orgId),
-    getConfigValue(orgId, "SEASON", ""),
-    getPointAwards(orgId),
-    getGroupBonusInputs(orgId),
-  ]);
-  return computeStandingsWithBreakdowns(attendance, members, season, awards, groups, new Date());
-}
-
-/** Same relationship to getStandingsWithBreakdowns as getStandingsForSeason has to getStandings — used only by lib/standings-cache.ts's getCachedStandingsWithBreakdowns. */
+/** Same relationship to getStandingsWithBreakdownsForSeason's own computation as getStandingsForSeason has to getStandings — used only by lib/standings-cache.ts's getCachedStandingsWithBreakdowns. */
 export async function getStandingsWithBreakdownsForSeason(
   orgId: string,
   season: string,
@@ -884,7 +939,7 @@ export async function getStandingsWithBreakdownsForSeason(
  * getStandings excludes them from the board entirely until they report.
  */
 export async function getMemberBreakdown(orgId: string, email: string): Promise<PointBreakdown> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const zero: PointBreakdown = { eventPoints: 0, nsbeWeekBonus: 0, gameBonus: 0, monthlyChampionBonus: 0, manualBonus: 0, total: 0 };
   const [member, attendance, awards, groups] = await Promise.all([
     getMember(orgId, e),
@@ -918,7 +973,7 @@ export async function getMemberSummaryLive(
   season: string,
   cachedStandings: Standing[],
 ): Promise<MemberSummary> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const [member, attendance, awards, groups] = await Promise.all([
     getMember(orgId, e),
     getMemberHistory(orgId, e),
@@ -974,11 +1029,6 @@ export async function getEboardStandings(orgId: string): Promise<Standing[]> {
     getEboardScoringConfig(orgId),
   ]);
   return computeEboardStandings(attendance, members, config);
-}
-
-export async function getEboardSummary(orgId: string, email: string): Promise<MemberSummary> {
-  const standings = await getEboardStandings(orgId);
-  return summaryFor(email, standings);
 }
 
 export interface EboardCategoryStats {
@@ -1081,7 +1131,7 @@ export async function getEboardBoardRows(orgId: string, filter?: EboardBoardFilt
 
 /** Filtered directly by user (via the Registration_userId_idx), not a slice of the full attendance log. */
 export async function getMemberHistory(orgId: string, email: string): Promise<AttendanceRecord[]> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const rows = await prisma.registration.findMany({
     where: { user: { orgId, email: e } },
     include: REGISTRATION_ATTENDANCE_INCLUDE,
@@ -1172,7 +1222,7 @@ export async function getAccountState(
   log: AdminLogEntry[],
 ): Promise<AccountState> {
   if (auth && !auth.mustChangePassword) return "active";
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const last = log.find(
     (l) => l.target.toLowerCase() === e && (l.action === "create_member" || l.action === "reset_password"),
   );
@@ -1214,7 +1264,7 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
   // seen for a given target is its most recent.
   const lastLogByEmail = new Map<string, Date>();
   for (const entry of log) {
-    const key = entry.target.trim().toLowerCase();
+    const key = normalizeEmail(entry.target);
     if (!lastLogByEmail.has(key) && entry.timestamp) lastLogByEmail.set(key, entry.timestamp);
   }
   const authByEmail = new Map(authRecords.map((a) => [a.email, a]));
@@ -1229,7 +1279,7 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
           ? "pending"
           : "none";
       const lastAttended = lastAttendanceByEmail.get(m.email) ?? null;
-      const lastLogged = lastLogByEmail.get(m.email.trim().toLowerCase()) ?? null;
+      const lastLogged = lastLogByEmail.get(normalizeEmail(m.email)) ?? null;
       const lastActiveAt =
         lastAttended && lastLogged ? (lastAttended > lastLogged ? lastAttended : lastLogged) : lastAttended ?? lastLogged;
       return {
@@ -1277,7 +1327,7 @@ export async function getHousePendingMembers(orgId: string): Promise<Member[]> {
 
 /** Verify/Revoke are pure audit now — neither gates the leaderboard (see lib/points.ts isEligible). Mutually exclusive: verifying clears a past revoke, and vice versa. */
 export async function verifyDues(orgId: string, email: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
@@ -1289,10 +1339,10 @@ export async function verifyDues(orgId: string, email: string, actor: string): P
 
 /** Requires a note — an admin actively determined the self-reported claim was false. Drops the member from the leaderboard immediately and re-arms the check-in question (sets duesPaidReported false, same field the leaderboard filter and core-form re-ask both read). */
 export async function revokeDues(orgId: string, email: string, actor: string, note: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
       select: { id: true },
     });
     await tx.user.update({
@@ -1312,7 +1362,7 @@ export async function revokeDues(orgId: string, email: string, actor: string, no
 }
 
 export async function verifyNational(orgId: string, email: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
@@ -1328,10 +1378,10 @@ export async function verifyNational(orgId: string, email: string, actor: string
 }
 
 export async function revokeNational(orgId: string, email: string, actor: string, note: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
       select: { id: true },
     });
     await tx.user.update({
@@ -1351,7 +1401,7 @@ export async function revokeNational(orgId: string, email: string, actor: string
 }
 
 export async function verifyHouse(orgId: string, email: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { houseVerifiedAt: new Date() } });
     await logAdminAction(tx, orgId, { actor, action: "verify_house", target: e });
@@ -1359,7 +1409,7 @@ export async function verifyHouse(orgId: string, email: string, actor: string): 
 }
 
 export async function rejectHouse(orgId: string, email: string, actor: string, note?: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
@@ -1371,7 +1421,7 @@ export async function rejectHouse(orgId: string, email: string, actor: string, n
 
 /** Admin correction — the only path to change a House once it's verified. Requires a note (same shape as revokeDues/revokeNational) so the AdminLog entry explains why a verified House was overridden. */
 export async function correctHouse(orgId: string, email: string, house: string, note: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { house, houseVerifiedAt: new Date() } });
     await logAdminAction(tx, orgId, { actor, action: "correct_house", target: e, detail: `${house} — ${note}` });
@@ -1389,7 +1439,7 @@ export async function correctHouse(orgId: string, email: string, house: string, 
 
 /** "Mark as paid" from /account, or an admin toggling it directly — the same season-stamp rule registerForEvent's check-in answer applies. */
 export async function setDuesReported(orgId: string, email: string, reported: boolean, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const currentSeason = await getConfigValue(orgId, "SEASON", "");
   const season = reported ? currentSeason : null;
   await prisma.$transaction(async (tx) => {
@@ -1415,7 +1465,7 @@ export async function setNationalReported(
   actor: string,
   nsbeMembershipId?: string,
 ): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const currentSeason = await getConfigValue(orgId, "SEASON", "");
   const season = reported ? currentSeason : null;
   await prisma.$transaction(async (tx) => {
@@ -1451,7 +1501,7 @@ export async function setHouseAssignment(
   houseProofFileId: string,
   actor: string,
 ): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
   if (user.houseVerifiedAt !== null) {
@@ -1472,7 +1522,7 @@ export async function setHouseAssignment(
  * House to begin with.
  */
 export async function clearHouseAssignment(orgId: string, email: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
   if (user.houseVerifiedAt !== null) {
@@ -1486,7 +1536,7 @@ export async function clearHouseAssignment(orgId: string, email: string, actor: 
 }
 
 export async function setResume(orgId: string, email: string, resumeFileId: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const now = new Date();
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
@@ -1499,7 +1549,7 @@ export async function setResume(orgId: string, email: string, resumeFileId: stri
 
 /** Withdraws consent — detaches the resume (clears the pointer + consent timestamp). Doesn't delete the underlying UploadedFile row/bytes: a hard-delete-from-storage feature is out of scope here. */
 export async function removeResume(orgId: string, email: string, actor: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
@@ -1529,7 +1579,7 @@ export async function updateProfileFields(
   fields: ProfileFieldsInput,
   actor: string,
 ): Promise<Member> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   // Writing classification or major here is the same "confirmed for this
   // season" event as answering the check-in gap-filler question — stamp
   // profileSeason so getMissingFields doesn't immediately re-ask (Part: the
@@ -1560,7 +1610,7 @@ export async function updateProfileFields(
 
 /** Self-service password change — verifies the current password first (unlike setPassword, used by the forced-setup-code flow, which trusts the caller already). */
 export async function changePassword(orgId: string, email: string, currentPassword: string, newPassword: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
   const ok = await verifyPassword(currentPassword, user.passwordHash);
@@ -1610,7 +1660,7 @@ export async function createUploadedFile(input: CreateUploadedFileInput): Promis
  */
 export function canAccessFile(file: { ownerEmail: string }, requester: { email: string; role: Role }): boolean {
   return (
-    file.ownerEmail.trim().toLowerCase() === requester.email.trim().toLowerCase() ||
+    normalizeEmail(file.ownerEmail) === normalizeEmail(requester.email) ||
     requester.role === "eboard" ||
     requester.role === "admin"
   );
@@ -1636,11 +1686,6 @@ export async function getUploadedFileForServing(
 export async function getEventCategories(orgId: string): Promise<EventCategory[]> {
   const rows = await prisma.eventCategory.findMany({ where: { orgId }, orderBy: { sortOrder: "asc" } });
   return rows.map(eventCategoryToDomain);
-}
-
-export async function getEventCategory(orgId: string, id: string): Promise<EventCategory | null> {
-  const row = await prisma.eventCategory.findFirst({ where: { id, orgId } });
-  return row ? eventCategoryToDomain(row) : null;
 }
 
 export interface EventCategoryInput {
@@ -1829,7 +1874,7 @@ export async function finalizeEventGroup(orgId: string, id: string, actor: strin
     const existing = await tx.eventGroup.findFirst({ where: { id, orgId } });
     if (!existing) throw new AppError("NOT_FOUND", "Group not found");
     const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
       select: { id: true },
     });
     const row = await tx.eventGroup.update({
@@ -1863,7 +1908,7 @@ export async function getActiveNsbeWeekProgress(
   email: string,
   now: Date = new Date(),
 ): Promise<NsbeWeekProgress | null> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const groups = await prisma.eventGroup.findMany({
     where: { orgId },
     include: { events: { select: { id: true, status: true, closesAt: true } } },
@@ -1950,7 +1995,7 @@ export async function getGroupAttendanceMatrix(
 // ---------------------------------------------------------------------------
 
 export async function getPointAwardsForUser(orgId: string, email: string): Promise<PointAward[]> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const rows = await prisma.pointAward.findMany({
     where: { orgId, user: { email: e } },
     include: { user: { select: { email: true } } },
@@ -1969,14 +2014,14 @@ export async function awardGameBonus(
   actor: string,
 ): Promise<{ awarded: string[]; skipped: string[] }> {
   const actorUser = await prisma.user.findUnique({
-    where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+    where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
     select: { id: true },
   });
 
   const awarded: string[] = [];
   const skipped: string[] = [];
   for (const rawEmail of emails) {
-    const email = rawEmail.trim().toLowerCase();
+    const email = normalizeEmail(rawEmail);
     const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email } } });
     if (!user) {
       skipped.push(email);
@@ -2025,12 +2070,12 @@ export interface CreateManualAwardInput {
 
 export async function createManualAward(input: CreateManualAwardInput): Promise<PointAward> {
   const { orgId } = input;
-  const email = input.email.trim().toLowerCase();
+  const email = normalizeEmail(input.email);
   const award = await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email } } });
     if (!user) throw new AppError("NOT_FOUND", "Member not found");
     const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: input.actor.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(input.actor) } },
       select: { id: true },
     });
     const row = await tx.pointAward.create({
@@ -2062,7 +2107,7 @@ export async function revokePointAward(orgId: string, id: string, actor: string,
     const existing = await tx.pointAward.findFirst({ where: { id, orgId } });
     if (!existing) throw new AppError("NOT_FOUND", "Award not found");
     const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
       select: { id: true },
     });
     await tx.pointAward.update({
@@ -2162,7 +2207,7 @@ export async function calculateMonthlyChampions(
   const toRevoke = existing.filter((a) => !championEmails.has(a.user.email));
 
   const actorUser = await prisma.user.findUnique({
-    where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+    where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
     select: { id: true },
   });
 
@@ -2283,7 +2328,7 @@ export interface RegisterForEventResult {
 
 export async function registerForEvent(input: RegisterForEventInput): Promise<RegisterForEventResult> {
   const { orgId } = input;
-  const email = input.email.trim().toLowerCase();
+  const email = normalizeEmail(input.email);
   const now = input.receivedAt ?? new Date();
 
   const [eventRow, user, coreFormConfig, season, eboardPointValue, eboardTrackEnabledRaw] = await Promise.all([
@@ -2322,7 +2367,7 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
 
   // EBOARD_ONLY events are 403 for anyone else — server-side defense in
   // depth; the page itself already calls next/navigation's forbidden().
-  const canSeeEboardOnly = role === "eboard" || role === "admin";
+  const canSeeEboardOnly = isEboardOrAdmin(role);
   if (event.audience === "eboard_only" && !canSeeEboardOnly) {
     throw new AppError("FORBIDDEN", "This event is for E-Board only");
   }
@@ -2536,7 +2581,7 @@ export interface RegisterGuestResult {
  */
 export async function registerGuest(input: RegisterGuestInput): Promise<RegisterGuestResult> {
   const { orgId } = input;
-  const email = input.email.trim().toLowerCase();
+  const email = normalizeEmail(input.email);
   const now = input.receivedAt ?? new Date();
 
   const fieldErrors: Record<string, string> = {};
@@ -2635,7 +2680,7 @@ export async function createEvent(input: CreateEventInput): Promise<Event> {
     const base = slugify(input.slug || `${input.name}-${(input.date ?? new Date()).getFullYear()}`);
     const slug = await uniqueSlug(tx, orgId, base);
     const creator = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: input.createdBy.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(input.createdBy) } },
       select: { id: true },
     });
 
@@ -2746,7 +2791,7 @@ export async function openEventNow(input: OpenEventNowInput): Promise<Event> {
     const durationMinutes = input.durationMinutes ?? DEFAULT_OPEN_DURATION_MINUTES;
     const closesAt = new Date(now.getTime() + durationMinutes * 60_000);
     const opener = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: input.openedBy.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(input.openedBy) } },
       select: { id: true },
     });
 
@@ -2848,7 +2893,7 @@ export async function reopenEvent(input: ReopenEventInput): Promise<Event> {
     const durationMinutes = input.durationMinutes ?? DEFAULT_OPEN_DURATION_MINUTES;
     const closesAt = new Date(now.getTime() + durationMinutes * 60_000);
     const reopener = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: input.reopenedBy.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(input.reopenedBy) } },
       select: { id: true },
     });
 
@@ -2894,7 +2939,7 @@ export interface AddManualAttendanceInput {
 
 export async function addManualAttendance(input: AddManualAttendanceInput): Promise<AttendanceRecord> {
   const { orgId } = input;
-  const email = input.email.trim().toLowerCase();
+  const email = normalizeEmail(input.email);
   const now = input.now ?? new Date();
 
   const [eventRow, user] = await Promise.all([
@@ -2977,7 +3022,7 @@ export async function deleteAttendance(orgId: string, id: string, actor: string)
  * demoted down to one.
  */
 export async function setMemberRole(orgId: string, email: string, role: Role, actor: string): Promise<Member> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const member = await prisma.$transaction(async (tx) => {
     const existing = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
     if (!existing) throw new AppError("NOT_FOUND", "Member not found");
@@ -3002,7 +3047,7 @@ export async function setMemberRole(orgId: string, email: string, role: Role, ac
 
 /** Displayed on the internal E-Board leaderboard only — meaningless for a non-EBOARD row, but not blocked (a demoted officer keeps their title on record). */
 export async function setEboardPosition(orgId: string, email: string, position: string, actor: string): Promise<Member> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   return prisma.$transaction(async (tx) => {
     try {
       const row = await tx.user.update({
@@ -3021,7 +3066,7 @@ export async function setEboardPosition(orgId: string, email: string, position: 
 }
 
 export async function setMemberStatus(orgId: string, email: string, status: UserStatus, actor: string): Promise<Member> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   return prisma.$transaction(async (tx) => {
     try {
       const row = await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { status: statusToDb(status) } });
@@ -3067,7 +3112,7 @@ export async function createMemberAccount(
   role: Role,
   actor: string,
 ): Promise<CreateMemberAccountResult> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const setupCode = generateSetupCode();
   const passwordHash = await hashPassword(setupCode);
 
@@ -3098,7 +3143,7 @@ export async function createMemberAccount(
 
 /** Sets a real password: writes the hash, clears mustChangePassword. */
 export async function setPassword(orgId: string, email: string, plain: string): Promise<void> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   // Hash BEFORE the write — bcrypt at cost 12 takes a couple hundred ms.
   const hash = await hashPassword(plain);
 
@@ -3121,7 +3166,7 @@ export async function setPassword(orgId: string, email: string, plain: string): 
  * mail infrastructure is assumed to exist for every deployment of this app.
  */
 export async function resetPassword(orgId: string, email: string, actor: string): Promise<string> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const setupCode = generateSetupCode();
   const passwordHash = await hashPassword(setupCode);
 
@@ -3172,7 +3217,7 @@ export async function createJoinCode(input: CreateJoinCodeInput): Promise<Create
   const hash = await hashPassword(plaintext);
   return prisma.$transaction(async (tx) => {
     const creator = await tx.user.findUnique({
-      where: { orgId_email: { orgId: input.orgId, email: input.createdBy.trim().toLowerCase() } },
+      where: { orgId_email: { orgId: input.orgId, email: normalizeEmail(input.createdBy) } },
       select: { id: true },
     });
     const row = await tx.joinCode.create({
@@ -3250,7 +3295,7 @@ export async function rotateJoinCodeById(orgId: string, id: string, actor: strin
   return prisma.$transaction(async (tx) => {
     await tx.joinCode.update({ where: { id }, data: { active: false, rotatedAt: new Date() } });
     const creator = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: actor.trim().toLowerCase() } },
+      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
       select: { id: true },
     });
     const row = await tx.joinCode.create({
@@ -3361,7 +3406,7 @@ export interface RedeemJoinCodeForSignupResult {
  */
 export async function redeemJoinCodeForSignup(input: RedeemJoinCodeForSignupInput): Promise<RedeemJoinCodeForSignupResult> {
   const { orgId } = input;
-  const email = input.email.trim().toLowerCase();
+  const email = normalizeEmail(input.email);
   const now = input.now ?? new Date();
   const trimmedCode = input.submittedCode.trim();
   // Signup capturing classification/major counts as confirming them for this
@@ -3692,7 +3737,7 @@ export interface BulkImportPreview {
 
 /** Read-only dry run: what would be created vs skipped, without writing anything. */
 export async function previewBulkImport(orgId: string, rows: BulkImportRow[]): Promise<BulkImportPreview> {
-  const emails = rows.map((r) => r.email.trim().toLowerCase()).filter(Boolean);
+  const emails = rows.map((r) => normalizeEmail(r.email)).filter(Boolean);
   const existingUsers = await prisma.user.findMany({ where: { orgId, email: { in: emails } }, select: { email: true } });
   const existing = new Set(existingUsers.map((u) => u.email));
   const seen = new Set<string>();
@@ -3700,7 +3745,7 @@ export async function previewBulkImport(orgId: string, rows: BulkImportRow[]): P
   const toSkip: BulkImportSkip[] = [];
 
   for (const raw of rows) {
-    const email = raw.email.trim().toLowerCase();
+    const email = normalizeEmail(raw.email);
     const row = { ...raw, email };
     if (!email || !raw.firstName.trim() || !raw.lastName.trim()) {
       toSkip.push({ row, reason: "Missing email, first name, or last name" });
@@ -3736,7 +3781,7 @@ export async function commitBulkImport(orgId: string, rows: BulkImportRow[], act
   const created: Array<{ email: string; setupCode: string }> = [];
 
   for (const raw of rows) {
-    const email = raw.email.trim().toLowerCase();
+    const email = normalizeEmail(raw.email);
     if (!email || !raw.firstName.trim() || !raw.lastName.trim()) continue;
     if (seen.has(email)) continue;
     seen.add(email);

@@ -21,8 +21,20 @@ import type {
   Role,
   Standing,
 } from "./types";
+import { normalizeEmail } from "./email";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The one place "eboard or admin" is spelled out — UI-only shortcut for what
+ * to render (e.g. the /admin nav link, whether an EBOARD_ONLY event is
+ * visible). Never a substitute for requireAdmin()/requireEboard()
+ * (lib/session.ts) at an actual enforcement point — those re-read the role
+ * from the roster instead of trusting a session's possibly-stale role.
+ */
+export function isEboardOrAdmin(role: Role): boolean {
+  return role === "eboard" || role === "admin";
+}
 
 /**
  * Whether an event is open for registration RIGHT NOW. Pure function of the
@@ -435,7 +447,7 @@ export function computeEboardStandings(
 }
 
 export function summaryFor(email: string, standings: Standing[]): MemberSummary {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   const row = standings.find((s) => s.email.toLowerCase() === e);
   return {
     email: e,
@@ -447,7 +459,7 @@ export function summaryFor(email: string, standings: Standing[]): MemberSummary 
 }
 
 export function hasRegistered(attendance: AttendanceRecord[], eventId: string, email: string): boolean {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   return attendance.some((r) => r.eventId === eventId && r.email.toLowerCase() === e);
 }
 

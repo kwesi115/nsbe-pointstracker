@@ -8,6 +8,9 @@
 
 export type Role = "admin" | "eboard" | "general" | "guest";
 
+/** A narrow, revocable capability grantable to one member independent of role — see lib/permissions.ts and prisma/schema.prisma's PermissionGrant. */
+export type PermissionName = "verifications_write";
+
 export type ShirtSize = "XS" | "S" | "M" | "L" | "XL" | "XXL" | "XXXL";
 
 /** EBOARD_ONLY events never appear in the member feed or member leaderboard — see lib/points.ts eboardAwardFor. */

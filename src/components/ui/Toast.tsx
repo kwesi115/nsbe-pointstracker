@@ -45,7 +45,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         aria-live="polite"
         aria-atomic="false"
-        className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-full max-w-xs flex-col gap-2"
+        // Clears MemberBottomNav's fixed mobile tab bar (+ safe area) so a
+        // toast never covers it or the primary action above it; md: resets
+        // to the original tight corner offset once that bar is md:hidden.
+        className="pointer-events-none fixed inset-x-4 bottom-[calc(var(--bottom-nav-height)+env(safe-area-inset-bottom,0px)+1rem)] z-[var(--z-toast)] flex flex-col gap-2 md:inset-x-auto md:right-4 md:bottom-4 md:w-full md:max-w-xs"
       >
         {toasts.map((t) => (
           <div

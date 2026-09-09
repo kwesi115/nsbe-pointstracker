@@ -462,7 +462,7 @@ function AccountStep({
           )}
         </Field>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="First name" required error={errors.firstName}>
             {(id) => (
               <input id={id} name="firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputClass} />

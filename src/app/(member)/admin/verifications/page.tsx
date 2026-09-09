@@ -1,10 +1,11 @@
 import AdminNav from "@/components/admin/AdminNav";
 import VerificationQueue from "@/components/admin/VerificationQueue";
 import { getDuesPendingMembers, getHousePendingMembers, getNationalPendingMembers } from "@/lib/repo";
-import { requireEboard } from "@/lib/session";
+import { isEboardOrAdmin } from "@/lib/session";
+import { requireVerificationsWrite } from "@/lib/permissions";
 
 export default async function AdminVerificationsPage() {
-  const session = await requireEboard();
+  const session = await requireVerificationsWrite();
   const orgId = session.user.orgId;
   const [dues, national, house] = await Promise.all([
     getDuesPendingMembers(orgId),
@@ -21,7 +22,13 @@ export default async function AdminVerificationsPage() {
           real record.
         </p>
       </div>
-      <AdminNav active="/admin/verifications" />
+      {isEboardOrAdmin(session.user.role) ? (
+        <AdminNav active="/admin/verifications" />
+      ) : (
+        <p className="text-xs text-muted">
+          You have access to this page only — granted by an Admin. <a href="/dashboard" className="underline underline-offset-2">Back to dashboard</a>
+        </p>
+      )}
 
       <p className="rounded-lg border border-line bg-surface-sunken px-4 py-3 text-sm text-ink">
         Members are on the leaderboard as soon as they report Yes — this queue confirms claims after the fact.

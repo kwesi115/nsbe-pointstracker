@@ -10,10 +10,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "prisma db seed",
-    "seed:fake": "cross-env SEED_FAKE=1 prisma db seed",
+    "seed:fake": "cross-env SEED_FAKE=true prisma db seed",
     "db:migrate": "tsx scripts/db-apply-sql.ts",
     "backup": "tsx scripts/backup-db.ts",
-    "restore": "tsx scripts/restore-db.ts"
+    "restore": "tsx scripts/restore-db.ts",
+    "clear-seed-data": "tsx scripts/clear-seed-data.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1125.0",
@@ -28,7 +29,6 @@
     "lucide-react": "^1.33.0",
     "next": "16.3.2",
     "next-auth": "^5.0.0-beta.32",
-    "nodemailer": "^8.0.11",
     "pg": "^8.23.0",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
@@ -40,7 +40,6 @@
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
-    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",

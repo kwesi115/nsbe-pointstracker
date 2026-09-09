@@ -125,7 +125,13 @@ export default function FileDropField({
             </button>
           </div>
         ) : (
-          <div
+          // The whole dashed box is the tap target on a phone (drag-and-drop
+          // is a bonus for desktop, never the only way in) — a <label>
+          // wrapping everything, not just the "Choose a file" text, opens the
+          // native file input (photo library on iOS, Files/gallery picker on
+          // Android) from anywhere in the box.
+          <label
+            htmlFor={id}
             onDragOver={(e) => {
               e.preventDefault();
               setDragOver(true);
@@ -136,7 +142,7 @@ export default function FileDropField({
               setDragOver(false);
               handleFiles(e.dataTransfer.files);
             }}
-            className={`flex flex-col items-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors ${
+            className={`flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors ${
               dragOver ? "border-signal bg-signal/5" : "border-line bg-surface"
             }`}
           >
@@ -159,12 +165,12 @@ export default function FileDropField({
                 </div>
               </div>
             ) : (
-              <label htmlFor={id} className="cursor-pointer text-sm font-medium text-signal underline underline-offset-2">
+              <span className="text-sm font-medium text-signal underline underline-offset-2">
                 Choose a file
-                <span className="block text-xs font-normal text-muted">or drag and drop — max 10MB</span>
-              </label>
+                <span className="block text-xs font-normal text-muted no-underline">or drag and drop — max 10MB</span>
+              </span>
             )}
-          </div>
+          </label>
         )
       }
     </Field>

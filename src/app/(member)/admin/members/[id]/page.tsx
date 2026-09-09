@@ -3,13 +3,15 @@ import AdminHousePanel from "@/components/admin/AdminHousePanel";
 import AdminMembershipPanel from "@/components/admin/AdminMembershipPanel";
 import AdminNav from "@/components/admin/AdminNav";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
+import PermissionsPanel from "@/components/admin/PermissionsPanel";
 import RoleSelect from "@/components/admin/RoleSelect";
 import Badge from "@/components/ui/Badge";
 import PointsChart, { type PointsChartPoint } from "@/components/dashboard/PointsChart";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
+import { normalizeEmail } from "@/lib/email";
 import { formatDate, formatDateTime, memberDisplayName } from "@/lib/format";
 import { attendanceRate, isEligible, longestAttendanceStreak } from "@/lib/points";
-import { getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory } from "@/lib/repo";
+import { getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory } from "@/lib/repo";
 import { requireAdminForbidden } from "@/lib/session";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,12 +24,13 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(orgId, id);
   if (!member) notFound();
 
-  const [history, events, adminLog, season, coreFormConfig] = await Promise.all([
+  const [history, events, adminLog, season, coreFormConfig, permissions] = await Promise.all([
     getMemberHistory(orgId, member.email),
     getEvents(orgId),
     getAdminLog(orgId),
     getConfigValue(orgId, "SEASON", ""),
     getCoreFormConfig(orgId),
+    getActivePermissions(orgId, member.email),
   ]);
 
   const eventById = new Map(events.map((e) => [e.eventId, e]));
@@ -62,7 +65,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     chartData.push({ date: (row.timestamp ?? new Date()).toISOString(), points: running });
   }
 
-  const memberLog = adminLog.filter((l) => l.target.trim().toLowerCase() === member.email.toLowerCase());
+  const memberLog = adminLog.filter((l) => normalizeEmail(l.target) === member.email.toLowerCase());
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-10">
@@ -98,6 +101,17 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">House</h2>
         <AdminHousePanel member={{ ...member, houseState }} houses={coreFormConfig.houses} />
       </section>
+
+      {member.role === "general" || member.role === "guest" ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Permissions</h2>
+          <p className="text-xs text-muted">
+            Grant access to one EBOARD-gated surface without promoting their role. A revoke takes effect on their
+            very next request.
+          </p>
+          <PermissionsPanel email={member.email} granted={permissions} />
+        </section>
+      ) : null}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Resume</h2>

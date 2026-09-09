@@ -25,9 +25,13 @@ import {
   getAdminLog,
   getEboardBoardRows,
   getEboardStandings,
+  getActivePermissions,
   getMemberById,
   getStandings,
+  grantPermission,
+  hasPermission,
   isLoginEmailAllowed,
+  revokePermission,
   registerForEvent as registerForEventRaw,
   revokeDues,
   revokePointAward,
@@ -973,5 +977,85 @@ describe("getMemberSummaryLive — the dashboard's own-row query never waits on 
 
     expect(summary.points).toBe(0);
     expect(summary.rank).toBeNull();
+  });
+});
+
+describe("permission grants — the permissions engine", () => {
+  it("hasPermission is false before any grant, true after granting, and false again after revoking", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    const member = await makeUser({ role: Role.GENERAL });
+
+    expect(await hasPermission(orgId, member.email, "verifications_write")).toBe(false);
+
+    await grantPermission(orgId, member.email, "verifications_write", admin.email);
+    expect(await hasPermission(orgId, member.email, "verifications_write")).toBe(true);
+
+    await revokePermission(orgId, member.email, "verifications_write", admin.email);
+    expect(await hasPermission(orgId, member.email, "verifications_write")).toBe(false);
+  });
+
+  it("re-granting after a revoke reuses the same row (one row per orgId/userId/permission, not a second one)", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    const member = await makeUser({ role: Role.GENERAL });
+
+    await grantPermission(orgId, member.email, "verifications_write", admin.email);
+    await revokePermission(orgId, member.email, "verifications_write", admin.email);
+    await grantPermission(orgId, member.email, "verifications_write", admin.email);
+
+    const rows = await prisma.permissionGrant.findMany({ where: { orgId, userId: member.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].revokedAt).toBeNull();
+  });
+
+  it("getActivePermissions lists only currently-active grants", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    const member = await makeUser({ role: Role.GENERAL });
+
+    expect(await getActivePermissions(orgId, member.email)).toEqual([]);
+    await grantPermission(orgId, member.email, "verifications_write", admin.email);
+    expect(await getActivePermissions(orgId, member.email)).toEqual(["verifications_write"]);
+    await revokePermission(orgId, member.email, "verifications_write", admin.email);
+    expect(await getActivePermissions(orgId, member.email)).toEqual([]);
+  });
+
+  it("revoking a permission that was never granted is a no-op, not an error", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    const member = await makeUser({ role: Role.GENERAL });
+
+    await expect(revokePermission(orgId, member.email, "verifications_write", admin.email)).resolves.toBeUndefined();
+    expect(await hasPermission(orgId, member.email, "verifications_write")).toBe(false);
+  });
+
+  it("granting/revoking writes an AdminLog entry attributing the actor", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    const member = await makeUser({ role: Role.GENERAL });
+
+    await grantPermission(orgId, member.email, "verifications_write", admin.email);
+    await revokePermission(orgId, member.email, "verifications_write", admin.email);
+
+    const log = await getAdminLog(orgId);
+    const granted = log.find((l) => l.action === "grant_permission" && l.target === member.email);
+    const revoked = log.find((l) => l.action === "revoke_permission" && l.target === member.email);
+    expect(granted?.actor).toBe(admin.email);
+    expect(revoked?.actor).toBe(admin.email);
+  });
+
+  it("grantPermission throws NOT_FOUND for an email with no account in this org", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    await expect(
+      grantPermission(orgId, `nobody-${randomUUID()}@bison.howard.edu`, "verifications_write", admin.email),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("a deleted user's grant row is gone too (PermissionGrant.userId cascades)", async () => {
+    const admin = await makeUser({ role: Role.ADMIN });
+    const member = await makeUser({ role: Role.GENERAL });
+    await grantPermission(orgId, member.email, "verifications_write", admin.email);
+
+    await prisma.user.delete({ where: { id: member.id } });
+    createdUserIds = createdUserIds.filter((id) => id !== member.id); // already deleted — afterEach shouldn't try again
+
+    const rows = await prisma.permissionGrant.findMany({ where: { orgId, userId: member.id } });
+    expect(rows).toHaveLength(0);
   });
 });

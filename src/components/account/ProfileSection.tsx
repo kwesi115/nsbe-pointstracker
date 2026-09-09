@@ -84,7 +84,7 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
       </div>
       <Card>
         {!editing ? (
-          <dl className="grid grid-cols-2 gap-4 text-sm">
+          <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-xs text-muted">Name</dt>
               <dd className="text-ink">
@@ -114,7 +114,7 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
           </dl>
         ) : (
           <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="First name">{(id) => <input id={id} value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputClass} />}</Field>
               <Field label="Last name">{(id) => <input id={id} value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />}</Field>
             </div>

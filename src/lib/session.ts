@@ -7,7 +7,10 @@ import type { Session } from "next-auth";
 import { forbidden } from "next/navigation";
 import { auth } from "@/auth";
 import { AppError } from "./errors";
+import { isEboardOrAdmin } from "./points";
 import { getRole } from "./repo";
+
+export { isEboardOrAdmin };
 
 export async function requireSession(): Promise<Session> {
   const session = await auth();

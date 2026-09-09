@@ -202,7 +202,7 @@ export default function CoreCheckInForm({
       {/* Live gap-filler questions — only ever what's missing, stale, or being edited. */}
       {nameLive ? (
         <section className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label={coreField("firstName").label} required error={errors.firstName}>
               {(id, describedBy) => (
                 <input

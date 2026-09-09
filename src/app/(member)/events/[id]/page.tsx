@@ -6,7 +6,7 @@ import Badge from "@/components/ui/Badge";
 import Countdown from "@/components/Countdown";
 import EmptyState from "@/components/ui/EmptyState";
 import { formatDate, formatDateTime } from "@/lib/format";
-import { hasRegistered, isOpen } from "@/lib/points";
+import { hasRegistered, isEboardOrAdmin, isOpen } from "@/lib/points";
 import { getAttendanceForEvent, getCoreFormUiConfig, getEvent, getFormFields, getMember } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
 
@@ -22,7 +22,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   // A real 403 (next/navigation's forbidden(), see next.config.ts
   // authInterrupts) — not merely hidden from the feed. registerForEvent has
   // the same check server-side as defense in depth.
-  if (event.audience === "eboard_only" && session.user.role !== "eboard" && session.user.role !== "admin") {
+  if (event.audience === "eboard_only" && !isEboardOrAdmin(session.user.role)) {
     forbidden();
   }
 
@@ -37,12 +37,12 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const registered = hasRegistered(attendance, event.eventId, session.user.email);
 
   return (
-    <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 px-4 py-4 md:gap-6 md:px-6 md:py-10">
       <div>
         <Link href="/events" className="text-sm text-muted hover:text-ink">
           ← Events
         </Link>
-        <h1 className="mt-1 font-display text-2xl font-bold text-ink">{event.name}</h1>
+        <h1 className="mt-1 font-display text-xl font-bold text-ink md:text-2xl">{event.name}</h1>
         <p className="text-sm text-muted">
           {event.category.shortName} · +{event.points ?? event.category.memberPoints} · {formatDate(event.date)} ·{" "}
           {event.location || "Location TBD"}

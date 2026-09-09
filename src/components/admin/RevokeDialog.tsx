@@ -45,9 +45,9 @@ export default function RevokeDialog({
       ref={ref}
       onCancel={close}
       onClose={close}
-      className="m-auto w-full max-w-sm rounded-xl border border-line bg-surface p-0 backdrop:bg-ink/50"
+      className="inset-x-0 top-auto bottom-0 m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border border-line bg-surface p-0 backdrop:bg-ink/50 sm:inset-0 sm:m-auto sm:max-h-none sm:w-full sm:max-w-sm sm:rounded-xl"
     >
-      <div className="flex flex-col gap-3 p-5">
+      <div className="pb-safe-bottom flex flex-col gap-3 p-5">
         <h2 className="font-display text-lg font-bold text-ink">{title}</h2>
         <p className="text-sm text-muted">
           This removes them from the leaderboard immediately and re-arms the question at their next check-in. Say why.

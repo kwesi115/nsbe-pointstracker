@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
+import { requireVerificationsWriteAction } from "@/lib/permissions";
 import { rejectHouse, revokeDues, revokeNational, verifyDues, verifyHouse, verifyNational } from "@/lib/repo";
-import { requireEboard } from "@/lib/session";
 
 export type VerificationQueueTab = "dues" | "national" | "house";
 
@@ -21,10 +22,10 @@ async function run(fn: () => Promise<void>): Promise<{ error: string | null }> {
 }
 
 export async function approveAction(tab: VerificationQueueTab, email: string): Promise<{ error: string | null }> {
-  const session = await requireEboard();
+  const session = await requireVerificationsWriteAction();
   const orgId = session.user.orgId;
   const actor = session.user.email;
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   if (tab === "dues") return run(() => verifyDues(orgId, e, actor));
   if (tab === "national") return run(() => verifyNational(orgId, e, actor));
   return run(() => verifyHouse(orgId, e, actor));
@@ -32,9 +33,9 @@ export async function approveAction(tab: VerificationQueueTab, email: string): P
 
 /** House keeps the plain reject flow (note optional, unchanged). Dues/national go through revokeAction instead — a note is required there. */
 export async function rejectAction(email: string, note?: string): Promise<{ error: string | null }> {
-  const session = await requireEboard();
+  const session = await requireVerificationsWriteAction();
   const actor = session.user.email;
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   return run(() => rejectHouse(session.user.orgId, e, actor, note));
 }
 
@@ -44,10 +45,10 @@ export async function revokeAction(
   email: string,
   note: string,
 ): Promise<{ error: string | null }> {
-  const session = await requireEboard();
+  const session = await requireVerificationsWriteAction();
   const orgId = session.user.orgId;
   const actor = session.user.email;
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   if (!note.trim()) return { error: "A note is required to revoke a claim." };
   if (tab === "dues") return run(() => revokeDues(orgId, e, actor, note));
   return run(() => revokeNational(orgId, e, actor, note));

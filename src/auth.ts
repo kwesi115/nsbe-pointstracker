@@ -1,6 +1,7 @@
 import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { cookies } from "next/headers";
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { GUEST_PASS_COOKIE } from "@/lib/guest-pass";
 import { verifyPassword } from "@/lib/passwords";
@@ -39,7 +40,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         orgId: { label: "Org", type: "text" },
       },
       async authorize(credentials, request) {
-        const email = String(credentials?.email ?? "").trim().toLowerCase();
+        const email = normalizeEmail(String(credentials?.email ?? ""));
         const password = String(credentials?.password ?? "");
         const orgId = String(credentials?.orgId ?? "");
         if (!email || !password || !orgId) return null;

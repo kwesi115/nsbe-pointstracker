@@ -1,15 +1,18 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import {
   approveMember,
   commitBulkImport,
   correctHouse,
   createMemberAccount,
+  grantPermission,
   previewBulkImport,
   rejectMember,
   resetPassword,
+  revokePermission,
   setEboardPosition,
   setMemberRole,
   updateProfileFields,
@@ -20,7 +23,7 @@ import {
   type ProfileFieldsInput,
 } from "@/lib/repo";
 import { requireAdmin } from "@/lib/session";
-import type { Role } from "@/lib/types";
+import type { PermissionName, Role } from "@/lib/types";
 
 export interface CreateMemberState {
   error: string | null;
@@ -33,7 +36,7 @@ export async function createMemberAction(
 ): Promise<CreateMemberState> {
   const session = await requireAdmin();
 
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
   const firstName = String(formData.get("firstName") ?? "").trim();
   const lastName = String(formData.get("lastName") ?? "").trim();
   const role = String(formData.get("role") ?? "general") as Role;
@@ -65,7 +68,7 @@ export async function resetPasswordAction(
   formData: FormData,
 ): Promise<ResetPasswordState> {
   const session = await requireAdmin();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
 
   try {
     const setupCode = await resetPassword(session.user.orgId, email, session.user.email);
@@ -83,7 +86,7 @@ export async function resetPasswordAction(
 export async function setRoleAction(email: string, role: Role): Promise<{ error: string | null }> {
   const session = await requireAdmin();
   try {
-    await setMemberRole(session.user.orgId, email.trim().toLowerCase(), role, session.user.email);
+    await setMemberRole(session.user.orgId, normalizeEmail(email), role, session.user.email);
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
     return { error: null };
@@ -96,7 +99,7 @@ export async function setRoleAction(email: string, role: Role): Promise<{ error:
 export async function approveMemberAction(email: string): Promise<{ error: string | null }> {
   const session = await requireAdmin();
   try {
-    await approveMember(session.user.orgId, email.trim().toLowerCase(), session.user.email);
+    await approveMember(session.user.orgId, normalizeEmail(email), session.user.email);
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
     return { error: null };
@@ -109,7 +112,7 @@ export async function approveMemberAction(email: string): Promise<{ error: strin
 export async function rejectMemberAction(email: string): Promise<{ error: string | null }> {
   const session = await requireAdmin();
   try {
-    await rejectMember(session.user.orgId, email.trim().toLowerCase(), session.user.email);
+    await rejectMember(session.user.orgId, normalizeEmail(email), session.user.email);
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
     return { error: null };
@@ -124,7 +127,7 @@ export async function correctHouseAction(email: string, house: string, note: str
   const session = await requireAdmin();
   if (!note.trim()) return { error: "A note is required to change a member's House." };
   try {
-    await correctHouse(session.user.orgId, email.trim().toLowerCase(), house, note, session.user.email);
+    await correctHouse(session.user.orgId, normalizeEmail(email), house, note, session.user.email);
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
     return { error: null };
@@ -138,7 +141,7 @@ export async function correctHouseAction(email: string, house: string, note: str
 export async function setEboardPositionAction(email: string, position: string): Promise<{ error: string | null }> {
   const session = await requireAdmin();
   try {
-    await setEboardPosition(session.user.orgId, email.trim().toLowerCase(), position, session.user.email);
+    await setEboardPosition(session.user.orgId, normalizeEmail(email), position, session.user.email);
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
     return { error: null };
@@ -173,7 +176,7 @@ async function bulkRun(
   const session = await requireAdmin();
   for (const email of emails) {
     try {
-      await fn(session.user.orgId, email.trim().toLowerCase(), session.user.email);
+      await fn(session.user.orgId, normalizeEmail(email), session.user.email);
     } catch (err) {
       if (err instanceof AppError) return { error: `${email}: ${err.message}` };
       throw err;
@@ -199,8 +202,33 @@ export async function bulkSetRoleAction(emails: string[], role: Role): Promise<{
 export async function adminUpdateProfileAction(email: string, fields: ProfileFieldsInput): Promise<{ error: string | null }> {
   const session = await requireAdmin();
   try {
-    await updateProfileFields(session.user.orgId, email.trim().toLowerCase(), fields, session.user.email);
+    await updateProfileFields(session.user.orgId, normalizeEmail(email), fields, session.user.email);
     revalidatePath("/admin/members");
+    revalidatePath("/admin/members/[id]", "page");
+    return { error: null };
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+}
+
+/** /admin/members/[id] Permissions panel — ADMIN only, same as every other member-management action here (see lib/permissions.ts for the engine this grants into). */
+export async function grantPermissionAction(email: string, permission: PermissionName): Promise<{ error: string | null }> {
+  const session = await requireAdmin();
+  try {
+    await grantPermission(session.user.orgId, normalizeEmail(email), permission, session.user.email);
+    revalidatePath("/admin/members/[id]", "page");
+    return { error: null };
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+}
+
+export async function revokePermissionAction(email: string, permission: PermissionName): Promise<{ error: string | null }> {
+  const session = await requireAdmin();
+  try {
+    await revokePermission(session.user.orgId, normalizeEmail(email), permission, session.user.email);
     revalidatePath("/admin/members/[id]", "page");
     return { error: null };
   } catch (err) {

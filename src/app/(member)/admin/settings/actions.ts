@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { codeFromName, serializeHouses, type House } from "@/lib/houses";
 import { DEFAULT_LEADERBOARD_DISCLAIMER, DEFAULT_NATIONAL_MEMBERSHIP_URL, setConfigValue } from "@/lib/repo";
@@ -46,7 +47,7 @@ export async function updateSettingsAction(_prevState: SettingsState, formData: 
   // AdminLog write, same as every other field on this form.
   const adminEmailAllowlist = String(formData.get("adminEmailAllowlist") ?? "")
     .split("\n")
-    .map((v) => v.trim().toLowerCase())
+    .map((v) => normalizeEmail(v))
     .filter(Boolean)
     .join("|");
 

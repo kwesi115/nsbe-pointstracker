@@ -54,7 +54,7 @@ const HARDCODED_ADMINS = [
 ];
 
 describe("prisma/seed.ts — Howard NSBE officer accounts", () => {
-  it("seeds all seven accounts as ACTIVE ADMIN with the right eboardPosition, forced password change, and the seed password", async () => {
+  it("seeds all seven accounts as ACTIVE ADMIN with the right eboardPosition, no forced password change, and the seed password", async () => {
     runSeed();
     const org = await prisma.org.findUniqueOrThrow({ where: { slug: "howard-nsbe" } });
     const seedPassword = process.env.SEED_ADMIN_PASSWORD ?? "howard1867";
@@ -64,7 +64,10 @@ describe("prisma/seed.ts — Howard NSBE officer accounts", () => {
       expect(user.role).toBe(Role.ADMIN);
       expect(user.status).toBe(UserStatus.ACTIVE);
       expect(user.eboardPosition).toBe(eboardPosition);
-      expect(user.mustChangePassword).toBe(true);
+      // These seven share the seed password by design — they sign in with it
+      // and reach /admin directly, unlike every other admin-provisioned
+      // account (see prisma/seed.ts seedHardcodedAdmins).
+      expect(user.mustChangePassword).toBe(false);
       expect(await verifyPassword(seedPassword, user.passwordHash)).toBe(true);
     }
   }, 30_000);
@@ -77,7 +80,7 @@ describe("prisma/seed.ts — Howard NSBE officer accounts", () => {
 
     await prisma.user.update({
       where: { orgId_email: { orgId: org.id, email } },
-      data: { passwordHash: realHash, mustChangePassword: false },
+      data: { passwordHash: realHash, mustChangePassword: true },
     });
 
     try {
@@ -85,7 +88,7 @@ describe("prisma/seed.ts — Howard NSBE officer accounts", () => {
 
       const user = await prisma.user.findUniqueOrThrow({ where: { orgId_email: { orgId: org.id, email } } });
       expect(user.passwordHash).toBe(realHash);
-      expect(user.mustChangePassword).toBe(false);
+      expect(user.mustChangePassword).toBe(true);
       // Role/position are still refreshed on every run — only the password path is protected.
       expect(user.role).toBe(Role.ADMIN);
       expect(user.eboardPosition).toBe(HARDCODED_ADMINS[0].eboardPosition);
@@ -96,7 +99,7 @@ describe("prisma/seed.ts — Howard NSBE officer accounts", () => {
       const seedPassword = process.env.SEED_ADMIN_PASSWORD ?? "howard1867";
       await prisma.user.update({
         where: { orgId_email: { orgId: org.id, email } },
-        data: { passwordHash: await hashPassword(seedPassword), mustChangePassword: true },
+        data: { passwordHash: await hashPassword(seedPassword), mustChangePassword: false },
       });
     }
   }, 30_000);

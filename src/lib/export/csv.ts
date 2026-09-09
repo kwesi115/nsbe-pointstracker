@@ -1,3 +1,4 @@
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { toCsv } from "@/lib/csv";
 import { formatDateTime } from "@/lib/format";
@@ -86,7 +87,7 @@ export async function buildEboardLeaderboardCsv(orgId: string): Promise<{ csv: s
 
 /** Admin-only — /admin/members "Export selected" (Part 5). Selection is a list of emails, since it can exceed a GET URL's practical length. */
 export async function buildMembersCsv(orgId: string, emails: string[]): Promise<{ csv: string; filename: string }> {
-  const wanted = new Set(emails.map((e) => e.trim().toLowerCase()));
+  const wanted = new Set(emails.map((e) => normalizeEmail(e)));
   const members = (await getMembersWithStats(orgId)).filter((m) => wanted.has(m.email));
   const header = [
     "First Name",

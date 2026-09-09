@@ -2,6 +2,7 @@
 
 import { AuthError } from "next-auth";
 import { signIn } from "@/auth";
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { OTHER_MAJOR } from "@/lib/core-form";
 import { hashPassword, validatePasswordStrength } from "@/lib/passwords";
@@ -98,7 +99,7 @@ export async function createAccountAction(_prevState: CreateAccountState, formDa
   }
 
   const code = String(formData.get("code") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
   const password = String(formData.get("password") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
   const firstName = String(formData.get("firstName") ?? "").trim();

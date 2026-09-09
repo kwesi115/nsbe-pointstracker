@@ -27,7 +27,8 @@ export default async function MemberLayout({ children }: { children: React.React
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <MemberNav session={session} />
-      <div className="flex flex-1 flex-col">{children}</div>
+      {/* pb-bottom-nav clears MemberBottomNav's fixed mobile tab bar — see globals.css. No-op at md: and up, where that bar is hidden. */}
+      <div className="pb-bottom-nav flex flex-1 flex-col md:pb-0">{children}</div>
     </div>
   );
 }

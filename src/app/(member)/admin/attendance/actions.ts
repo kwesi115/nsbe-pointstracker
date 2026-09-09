@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { addManualAttendance, deleteAttendance } from "@/lib/repo";
 import { requireEboard } from "@/lib/session";
@@ -12,7 +13,7 @@ export interface AddAttendanceState {
 export async function addAttendanceAction(_prevState: AddAttendanceState, formData: FormData): Promise<AddAttendanceState> {
   const session = await requireEboard();
   const eventId = String(formData.get("eventId") ?? "");
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
   const note = String(formData.get("note") ?? "").trim();
 
   if (!eventId || !email || !note) {

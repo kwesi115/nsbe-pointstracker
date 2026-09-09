@@ -68,10 +68,16 @@ export default function CodeGate({
             setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
             setError(null);
           }}
+          onFocus={(e) => {
+            // The numeric keypad can eat a third of a small screen — make sure
+            // this field (and not just whatever the browser guesses) is what
+            // ends up above it.
+            e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+          }}
           disabled={pending || eventNotOpen}
           aria-describedby={error ? "checkin-code-error" : undefined}
           inputMode="numeric"
-          autoComplete="off"
+          autoComplete="one-time-code"
           autoFocus
           placeholder="000000"
           className={`numeric min-h-16 w-full rounded-xl border border-line bg-white px-4 text-center font-display text-3xl font-bold tracking-[0.3em] text-ink placeholder:text-line focus-visible:border-signal disabled:opacity-50`}
@@ -83,9 +89,16 @@ export default function CodeGate({
         </p>
       ) : null}
       {!eventNotOpen ? (
-        <Button type="submit" disabled={pending || code.length !== 6}>
-          {pending ? "Checking…" : "Continue"}
-        </Button>
+        // Sticky, not fixed — stays pinned to the viewport bottom (above the
+        // safe area) while this form is in view, so it's reachable without
+        // scrolling even with the on-screen keyboard eating a third of a
+        // small phone's height, but never floats over unrelated page content
+        // once this step is past. Desktop has room to spare — static there.
+        <div className="pb-safe-bottom sticky bottom-0 -mx-4 bg-paper px-4 pt-2 md:static md:mx-0 md:bg-transparent md:p-0">
+          <Button type="submit" disabled={pending || code.length !== 6} className="w-full">
+            {pending ? "Checking…" : "Continue"}
+          </Button>
+        </div>
       ) : null}
     </form>
   );

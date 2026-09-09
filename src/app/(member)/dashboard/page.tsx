@@ -8,7 +8,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import StatTile from "@/components/ui/StatTile";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { formatDate } from "@/lib/format";
-import { eboardAwardFor, isEligible, memberPointsFor } from "@/lib/points";
+import { eboardAwardFor, isEboardOrAdmin, isEligible, memberPointsFor } from "@/lib/points";
 import {
   getActiveNsbeWeekProgress,
   getConfigValue,
@@ -82,7 +82,7 @@ export default async function DashboardPage() {
   const email = session.user.email;
   const orgId = session.user.orgId;
 
-  if (session.user.role === "eboard" || session.user.role === "admin") {
+  if (isEboardOrAdmin(session.user.role)) {
     return <EboardDashboard orgId={orgId} email={email} />;
   }
 
@@ -136,7 +136,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-6 py-10">
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6 md:gap-8 md:px-6 md:py-10">
       <h1 className="font-display text-2xl font-bold text-ink">Dashboard</h1>
 
       {/* The single best attendance driver in the system — kept prominent, above the fold, during an active week. */}
@@ -190,30 +190,56 @@ export default async function DashboardPage() {
 
           <section className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Attendance history</h2>
-            <Table>
-              <Thead>
-                <th className={thClass}>Event</th>
-                <th className={thClass}>Date</th>
-                <th className={thClass}>Category</th>
-                <th className={thClass}>Points</th>
-                <th className={thClass}></th>
-              </Thead>
-              <tbody>
-                {history.map((row) => (
-                  <tr key={row.id} className="border-b border-line last:border-0">
-                    <td className={tdClass}>{eventById.get(row.eventId)?.name ?? row.eventId}</td>
-                    <td className={tdClass}>{formatDate(row.timestamp)}</td>
-                    <td className={tdClass}>{eventById.get(row.eventId)?.category.shortName ?? "—"}</td>
-                    <td className={`${tdClass} numeric`}>
-                      {memberPointsFor({ role: "general" }, { points: row.eventPointsOverride }, row.category)}
-                    </td>
-                    <td className={tdClass}>
-                      {row.source === "manual" ? <Badge tone="amber">Added by E-Board</Badge> : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+
+            {/* Stacked cards on mobile — a 5-column table is a horizontal-scroll
+                surface, fine for an admin roster but not for a member's own
+                history. md: swaps to the real table, which has more room to
+                spare. */}
+            <div className="flex flex-col gap-2 md:hidden">
+              {history.map((row) => (
+                <div key={row.id} className="rounded-xl border border-line bg-surface p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-medium text-ink">{eventById.get(row.eventId)?.name ?? row.eventId}</p>
+                    <span className="numeric shrink-0 text-base font-semibold text-ink">
+                      +{memberPointsFor({ role: "general" }, { points: row.eventPointsOverride }, row.category)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                    <span>{formatDate(row.timestamp)}</span>
+                    <span>·</span>
+                    <span>{eventById.get(row.eventId)?.category.shortName ?? "—"}</span>
+                    {row.source === "manual" ? <Badge tone="amber">Added by E-Board</Badge> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden md:block">
+              <Table>
+                <Thead>
+                  <th className={thClass}>Event</th>
+                  <th className={thClass}>Date</th>
+                  <th className={thClass}>Category</th>
+                  <th className={thClass}>Points</th>
+                  <th className={thClass}></th>
+                </Thead>
+                <tbody>
+                  {history.map((row) => (
+                    <tr key={row.id} className="border-b border-line last:border-0">
+                      <td className={tdClass}>{eventById.get(row.eventId)?.name ?? row.eventId}</td>
+                      <td className={tdClass}>{formatDate(row.timestamp)}</td>
+                      <td className={tdClass}>{eventById.get(row.eventId)?.category.shortName ?? "—"}</td>
+                      <td className={`${tdClass} numeric`}>
+                        {memberPointsFor({ role: "general" }, { points: row.eventPointsOverride }, row.category)}
+                      </td>
+                      <td className={tdClass}>
+                        {row.source === "manual" ? <Badge tone="amber">Added by E-Board</Badge> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </div>
           </section>
         </>
       )}
@@ -245,7 +271,7 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
   const totalRanked = rows.length;
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-6 py-10">
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6 md:gap-8 md:px-6 md:py-10">
       <div>
         <div className="flex items-center gap-2">
           <h1 className="font-display text-2xl font-bold text-ink">Dashboard</h1>
@@ -263,32 +289,51 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
       {row ? (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Category breakdown</h2>
-          <Table>
-            <Thead>
-              <th className={thClass}>Category</th>
-              <th className={thClass}>Points</th>
-              <th className={thClass}>Attended</th>
-              <th className={thClass}>Rate</th>
-            </Thead>
-            <tbody>
-              {(
-                [
-                  ["Chapter events", row.chapter],
-                  ["E-Board meetings", row.eboardMeetings],
-                  ["Retreats", row.retreats],
-                ] as const
-              ).map(([label, stats]) => (
-                <tr key={label} className="border-b border-line last:border-0">
-                  <td className={tdClass}>{label}</td>
-                  <td className={`${tdClass} numeric`}>{stats.points}</td>
-                  <td className={`${tdClass} numeric`}>{stats.attended}</td>
-                  <td className={`${tdClass} numeric`}>
-                    {stats.eligible > 0 ? `${stats.attended}/${stats.eligible}` : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <div className="flex flex-col gap-2 md:hidden">
+            {(
+              [
+                ["Chapter events", row.chapter],
+                ["E-Board meetings", row.eboardMeetings],
+                ["Retreats", row.retreats],
+              ] as const
+            ).map(([label, stats]) => (
+              <div key={label} className="flex items-center justify-between rounded-xl border border-line bg-surface p-3">
+                <p className="text-sm font-medium text-ink">{label}</p>
+                <div className="numeric flex gap-4 text-sm text-ink">
+                  <span>{stats.points} pts</span>
+                  <span className="text-muted">{stats.eligible > 0 ? `${stats.attended}/${stats.eligible}` : `${stats.attended} attended`}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block">
+            <Table>
+              <Thead>
+                <th className={thClass}>Category</th>
+                <th className={thClass}>Points</th>
+                <th className={thClass}>Attended</th>
+                <th className={thClass}>Rate</th>
+              </Thead>
+              <tbody>
+                {(
+                  [
+                    ["Chapter events", row.chapter],
+                    ["E-Board meetings", row.eboardMeetings],
+                    ["Retreats", row.retreats],
+                  ] as const
+                ).map(([label, stats]) => (
+                  <tr key={label} className="border-b border-line last:border-0">
+                    <td className={tdClass}>{label}</td>
+                    <td className={`${tdClass} numeric`}>{stats.points}</td>
+                    <td className={`${tdClass} numeric`}>{stats.attended}</td>
+                    <td className={`${tdClass} numeric`}>
+                      {stats.eligible > 0 ? `${stats.attended}/${stats.eligible}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
         </section>
       ) : null}
 
@@ -306,28 +351,49 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
       ) : (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Attendance history</h2>
-          <Table>
-            <Thead>
-              <th className={thClass}>Event</th>
-              <th className={thClass}>Date</th>
-              <th className={thClass}>Category</th>
-              <th className={thClass}>E-Board pts</th>
-            </Thead>
-            <tbody>
-              {history.map((historyRow) => {
-                const event = eventById.get(historyRow.eventId);
-                const points = eboardAwardFor("eboard", historyRow.category, eboardConfig);
-                return (
-                  <tr key={historyRow.id} className="border-b border-line last:border-0">
-                    <td className={tdClass}>{event?.name ?? historyRow.eventId}</td>
-                    <td className={tdClass}>{formatDate(historyRow.timestamp)}</td>
-                    <td className={tdClass}>{event?.category.shortName ?? "—"}</td>
-                    <td className={`${tdClass} numeric`}>{points}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
+          <div className="flex flex-col gap-2 md:hidden">
+            {history.map((historyRow) => {
+              const event = eventById.get(historyRow.eventId);
+              const points = eboardAwardFor("eboard", historyRow.category, eboardConfig);
+              return (
+                <div key={historyRow.id} className="rounded-xl border border-line bg-surface p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-medium text-ink">{event?.name ?? historyRow.eventId}</p>
+                    <span className="numeric shrink-0 text-base font-semibold text-ink">+{points}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                    <span>{formatDate(historyRow.timestamp)}</span>
+                    <span>·</span>
+                    <span>{event?.category.shortName ?? "—"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="hidden md:block">
+            <Table>
+              <Thead>
+                <th className={thClass}>Event</th>
+                <th className={thClass}>Date</th>
+                <th className={thClass}>Category</th>
+                <th className={thClass}>E-Board pts</th>
+              </Thead>
+              <tbody>
+                {history.map((historyRow) => {
+                  const event = eventById.get(historyRow.eventId);
+                  const points = eboardAwardFor("eboard", historyRow.category, eboardConfig);
+                  return (
+                    <tr key={historyRow.id} className="border-b border-line last:border-0">
+                      <td className={tdClass}>{event?.name ?? historyRow.eventId}</td>
+                      <td className={tdClass}>{formatDate(historyRow.timestamp)}</td>
+                      <td className={tdClass}>{event?.category.shortName ?? "—"}</td>
+                      <td className={`${tdClass} numeric`}>{points}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          </div>
         </section>
       )}
     </main>

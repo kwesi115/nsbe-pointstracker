@@ -84,6 +84,16 @@ enum ShirtSize {
   XXXL
 }
 
+// A narrow, revocable capability grant to one member — the escape valve for
+// "this GENERAL member needs access to exactly one EBOARD-gated surface"
+// without promoting their role (see lib/permissions.ts requireVerificationsWrite,
+// the only consumer today). Checked live on every request, never cached in
+// the JWT — same reasoning as lib/session.ts requireAdmin's own live role
+// re-read — so a revoke takes effect on the very next request.
+enum Permission {
+  VERIFICATIONS_WRITE
+}
+
 // A chapter. One row for launch ("howard-nsbe"); everything org-scoped below
 // carries an orgId so a second chapter can onboard without a data migration.
 model Org {
@@ -96,15 +106,16 @@ model Org {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  users           User[]
-  events          Event[]
-  eventCategories EventCategory[]
-  eventGroups     EventGroup[]
-  pointAwards     PointAward[]
-  configs         Config[]
-  adminLogs       AdminLog[]
-  uploadedFiles   UploadedFile[]
-  joinCodes       JoinCode[]
+  users            User[]
+  events           Event[]
+  eventCategories  EventCategory[]
+  eventGroups      EventGroup[]
+  pointAwards      PointAward[]
+  configs          Config[]
+  adminLogs        AdminLog[]
+  uploadedFiles    UploadedFile[]
+  joinCodes        JoinCode[]
+  permissionGrants PermissionGrant[]
 }
 
 // The sole signup security boundary (see lib/joincodes.ts): role is whatever
@@ -217,6 +228,10 @@ model User {
   pointAwards        PointAward[]   @relation("PointAwardUser")
   awardedPointAwards PointAward[]   @relation("PointAwardAwardedBy")
   revokedPointAwards PointAward[]   @relation("PointAwardRevokedBy")
+
+  permissionGrants        PermissionGrant[] @relation("PermissionGrantUser")
+  grantedPermissionGrants PermissionGrant[] @relation("PermissionGrantGrantedBy")
+  revokedPermissionGrants PermissionGrant[] @relation("PermissionGrantRevokedBy")
 
   @@unique([orgId, email])
   @@index([orgId])
@@ -452,6 +467,32 @@ model Config {
 
   @@unique([orgId, key])
   @@index([orgId])
+}
+
+// One row per (orgId, userId, permission) — granting after a revoke reuses
+// the same row (revokedAt/revokedById reset to null) rather than inserting a
+// second one, so the grant/revoke history for that capability stays on a
+// single, queryable row. userId cascades: a deleted user's grants are
+// meaningless and should vanish with them (see scripts/clear-seed-data.ts,
+// which never has to know this table exists).
+model PermissionGrant {
+  id         String     @id @default(cuid())
+  orgId      String
+  org        Org        @relation(fields: [orgId], references: [id])
+  userId     String
+  user       User       @relation("PermissionGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission
+
+  grantedAt   DateTime @default(now())
+  grantedById String?
+  grantedBy   User?    @relation("PermissionGrantGrantedBy", fields: [grantedById], references: [id])
+
+  revokedAt   DateTime?
+  revokedById String?
+  revokedBy   User?     @relation("PermissionGrantRevokedBy", fields: [revokedById], references: [id])
+
+  @@unique([orgId, userId, permission])
+  @@index([orgId, permission])
 }
 
 model AdminLog {

@@ -180,12 +180,14 @@ record) can change it after that.
 | **EBOARD** | Everything GENERAL can, plus: create/open/close/extend/reopen events, run the membership audit queue (verify or reject a claimed dues/national/House), manage attendance by hand, award game-competition bonuses, pull the projector/QR display, run every export, and see E-Board-only events and the internal E-Board leaderboard. Their own check-ins score on the internal E-Board track, not the member one. |
 | **ADMIN** | Everything EBOARD can, plus: manage members directly (change anyone's role or status, bulk-import a roster), create/rotate join codes, edit category point values and every chapter setting, manage NSBE Week groups, award manual bonuses, and calculate the Monthly Engagement Champion. |
 
-**In plain terms:** there is no separate "give this one person the ability to verify dues"
-switch. The two levers are **role** (GENERAL / EBOARD / ADMIN / GUEST) and, within EBOARD/ADMIN,
-nothing finer — promoting someone to EBOARD hands them everything on that row above, not a
-narrower slice of it. If you want someone to be able to verify dues, the only way is to make
-them E-Board (which also gives them event management, attendance, exports, and the internal
-leaderboard). See the discrepancy note at the very end of this document for more on why.
+**In plain terms:** role is the coarse lever, and there's one narrower one on top of it. An
+ADMIN can grant a single GENERAL member the `verifications_write` permission from their
+`/admin/members/[id]` page — that member reaches `/admin/verifications` and can verify/reject
+dues, National membership, and House claims, and nothing else on the table above. Revoking it
+takes effect on their very next request, not their next sign-in — nothing is cached in the
+session token. See [`lib/permissions.ts`](src/lib/permissions.ts) (the engine — the only place a
+grant is ever checked) and [`lib/repo.ts`](src/lib/repo.ts)'s `grantPermission`/
+`revokePermission`/`hasPermission` (the only place one is ever written).
 
 ## Admin surfaces
 
@@ -193,7 +195,7 @@ leaderboard). See the discrepancy note at the very end of this document for more
 |---|---|
 | `/admin` | The events board — create, open, close, extend, reopen events; see who's checked in live. |
 | `/admin/members` | The full roster — search/filter, bulk CSV import, change a role or status. |
-| `/admin/verifications` | The membership audit queue — spot-check self-reported dues, National NSBE membership, and House claims. |
+| `/admin/verifications` | The membership audit queue — spot-check self-reported dues, National NSBE membership, and House claims. EBOARD/ADMIN always; a GENERAL member can reach this one page alone if granted `verifications_write` (see [Roles and permissions](#roles-and-permissions)). |
 | `/admin/leaderboard` | The internal E-Board-only leaderboard (separate from the public member one). |
 | `/admin/attendance` | Every check-in ever logged, editable — add one by hand, delete a mistake. |
 | `/admin/groups` | NSBE Week (and any similar multi-event set) — assign events, set completion-bonus tiers, finalize early if a planned event gets canceled. |
@@ -399,11 +401,9 @@ truly start over, drop and recreate the database, then repeat steps 3–4.
 verified above. `scripts/db-apply-sql.ts` exists as a fallback for an environment where
 Prisma's schema-engine binary is blocked (e.g. by Windows Application Control policy) — it
 applies one raw `.sql` file directly, in its own transaction, and does **not** update Prisma's
-own migration-tracking table, so don't mix the two approaches against the same database. Its
-own usage comment (and the only form that actually works — see the discrepancy note at the
-end of this document) is:
+own migration-tracking table, so don't mix the two approaches against the same database. Usage:
 ```bash
-npx dotenv -e .env -- tsx scripts/db-apply-sql.ts prisma/migrations/0001_init/migration.sql
+npm run db:migrate -- prisma/migrations/0001_init/migration.sql
 ```
 
 ## Environment variables
@@ -415,18 +415,16 @@ npx dotenv -e .env -- tsx scripts/db-apply-sql.ts prisma/migrations/0001_init/mi
 | `AUTH_URL` | **Required** | The app's own base URL — also what the chapter QR code encodes (`/events`). | `https://points.howardnsbe.org` |
 | `CODE_SECRET` | **Required** | HMAC key for rotating check-in codes (`lib/code.ts`). Rotating this instantly changes every currently-displayed code. | (any non-empty random string) |
 | `INITIAL_ADMIN_EMAILS` | Optional | Comma-separated emails seeded as ADMIN accounts on first `npm run seed`. | `you@gmail.com` |
-| `SEED_ADMIN_PASSWORD` | Optional | Shared initial password for the seven hardcoded officer accounts (bcrypt-hashed at seed time). Falls back to `howard1867`. | `some-temp-password` |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Optional | Only used by the `EMAIL_VERIFY` signup mode; if unset, signup falls back to `CHAPTER_CODE` mode instead of creating unverifiable accounts. | — |
+| `SEED_ADMIN_PASSWORD` | Optional | Shared initial password for the seven hardcoded officer accounts (bcrypt-hashed at seed time). They sign in with it and reach `/admin` directly — `mustChangePassword` is deliberately not set for these seven. Falls back to `howard1867`. | `some-temp-password` |
+| `EBOARD_EMAILS` | Optional | Comma-separated — the standing officer roster. Promotes an existing account to EBOARD or seeds an unclaimed EBOARD placeholder, separate from the seven hardcoded accounts. | `officer@bison.howard.edu` |
+| `SEED_FAKE` | Optional | Exact string `"true"` seeds a full dev/demo season on top of the production seed (`npm run seed:fake`). Refuses outright if `NODE_ENV=production`. | `true` |
 | `STORAGE_DRIVER` | Optional | Member file uploads (House proof, resume). Unset = local disk (`.uploads/`, dev only). | `vercel-blob` |
 | `BACKUP_STORAGE_DRIVER` | Optional | Database backups and season snapshots — deliberately separate from `STORAGE_DRIVER` above. Unset = local disk (`.backups/`, dev/test only — **not** a real backup target). | `s3` |
 | `BACKUP_S3_BUCKET` / `BACKUP_S3_REGION` / `BACKUP_S3_ENDPOINT` / `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` | Required if `BACKUP_STORAGE_DRIVER=s3` | Private S3/R2 target for backups — the bucket must **not** have public read access. `BACKUP_S3_ENDPOINT` is only needed for R2, not real AWS S3. | — |
 | `RESTORE_ALLOW_REMOTE` | Optional | Explicit opt-in required for `scripts/restore-db.ts` to run against a non-localhost `DATABASE_URL`. | `true` |
+| `CLEAR_SEED_ALLOW_PRODUCTION` | Optional | Explicit opt-in required for `scripts/clear-seed-data.ts` to run when `NODE_ENV=production`. | `true` |
 
-`.env.example` at the repo root documents `DATABASE_URL`, `AUTH_SECRET`, `AUTH_URL`,
-`INITIAL_ADMIN_EMAILS`, `SEED_ADMIN_PASSWORD`, `CODE_SECRET`, and the `SMTP_*` block; the
-storage/backup variables above are read by the code (`lib/storage.ts`,
-`scripts/backup-db.ts`, `scripts/restore-db.ts`) but aren't yet listed in that file — see the
-discrepancy note at the end of this document.
+`.env.example` at the repo root documents every variable in the table above.
 
 ## Testing
 
@@ -497,6 +495,7 @@ explicitly.
 | **UploadedFile** | A House-proof screenshot or resume. Never publicly addressable — always served through `GET /api/files/[id]`, which checks owner-or-EBOARD. | `kind`, `storageKey` (a driver-internal handle, never a public URL), `originalName`, `mimeType`, `sizeBytes` | Belongs to `User` | — |
 | **Config** | Every chapter setting — season, point values for the E-Board track, form config, external links, brute-force thresholds. Flat key/value, not a typed table. | `key`, `value` (always a string; callers coerce) | Belongs to `Org` | `(orgId, key)` unique — one value per setting per chapter. |
 | **AdminLog** | The audit trail. Every admin mutation writes one row, in the same transaction as the mutation itself — never a best-effort write after the fact. | `action`, `target`, `detail`, `actorId` (nullable — a seed-run or a system-triggered event like a brute-force lock has no human actor) | Belongs to `Org`; optionally `User` (actor) | — |
+| **PermissionGrant** | A narrow, revocable capability grant to one member — the permissions engine (see [Roles and permissions](#roles-and-permissions)). Checked live on every request, never cached in the session. | `permission` (only `VERIFICATIONS_WRITE` today), `grantedAt`/`grantedById`, `revokedAt`/`revokedById` | Belongs to `User` (cascade-deletes with it — a deleted member's grants are meaningless); tracks `grantedBy`/`revokedBy` | `(orgId, userId, permission)` unique — one row per capability per member; granting after a revoke reuses the row (resets `revokedAt` to null) instead of inserting a second one, so the grant/revoke history stays on a single row. |
 
 ## Stored vs. computed
 
@@ -958,33 +957,24 @@ and either a `localhost` `DATABASE_URL` or `RESTORE_ALLOW_REMOTE=true`.
 ## Discrepancies and open questions
 
 *(Kept here rather than scattered inline, so anyone auditing this document against the code
-can check every claim in one place.)*
+can check every claim in one place. Three items that used to live here — no fine-grained
+permission system, `.env.example` behind the shipped code, and a broken `db:migrate` — have
+since been fixed; see [Roles and permissions](#roles-and-permissions) and
+[Environment variables](#environment-variables) above.)*
 
-1. **No fine-grained permission-grant system exists.** An earlier design intent (reflected in
-   how this document was commissioned) described being able to give one member the ability to
-   verify dues without making them a full admin. The shipped code has exactly two gates —
-   `requireAdmin()` and `requireEboard()` (`src/lib/session.ts`) — and nothing narrower. The
-   closest real capability is that dues/national/House verification (`/admin/verifications`)
-   only requires EBOARD, not ADMIN — so promoting someone to E-Board *does* grant it, but
-   along with everything else EBOARD can do (event management, attendance, exports, the
-   internal leaderboard). There is no way to grant verification ability alone.
-2. **`.env.example` is behind the shipped code.** `lib/storage.ts`'s backup driver
-   (`BACKUP_STORAGE_DRIVER`, `BACKUP_S3_*`) and `scripts/restore-db.ts`'s
-   `RESTORE_ALLOW_REMOTE` are real, functioning environment variables the code reads, but
-   `.env.example` at the repo root doesn't list them yet — they're documented in this README's
-   [Environment variables](#environment-variables) table instead.
-3. **The `npm run db:migrate` script as defined does not work.** `package.json` defines it as
-   plain `tsx scripts/db-apply-sql.ts` with no environment loading, but `db-apply-sql.ts`
-   itself never calls `dotenv`'s `config()` — it reads `process.env.DATABASE_URL` directly and
-   expects the caller to have loaded it. Run as `npm run db:migrate -- <path>`, it fails with a
-   Postgres auth error (confirmed by actually running it). The script's own header comment
-   documents the form that actually works —
-   `npx dotenv -e .env -- tsx scripts/db-apply-sql.ts <path>` — which is what this README uses
-   above instead of the `npm run` form.
-4. **Production is not evidenced to run on Neon**, despite `docs/RECOVERY.md`'s own framing
+1. **Production is not evidenced to run on Neon**, despite `docs/RECOVERY.md`'s own framing
    ("Neon's free tier has limited point-in-time recovery") suggesting it. Nothing in this
    repository — `.env`, `.env.example`, `package.json`, or any config file — references Neon;
    the local development setup is a plain Postgres instance (a Docker container, in this
    checkout). The [SQL cookbook](#sql-cookbook) and connection instructions above are written
    provider-agnostically for this reason. If production is in fact Neon, that's operational
    knowledge that lives outside this repo.
+2. **Replacing or removing a resume/House-proof file never deletes the superseded
+   `UploadedFile` row or its stored bytes** — `removeResume`/`setResume`/`clearHouseAssignment`
+   (`src/lib/repo.ts`) only ever change which file a member's `resumeFileId`/`houseProofFileId`
+   points at. This is a deliberate, documented scope boundary (see `removeResume`'s own comment)
+   rather than an oversight, so it hasn't been changed — but it means every resume replacement
+   or House-proof re-upload leaves the old file behind indefinitely in both the database and
+   blob storage. Worth revisiting given every other data-protection concern in this app treats
+   an orphaned member file as a real problem (see `scripts/clear-seed-data.ts`, which does
+   delete stored bytes for every `UploadedFile` row it removes).

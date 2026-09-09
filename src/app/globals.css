@@ -18,6 +18,29 @@
   /* Surfaces relative to --paper, for cards/rows on the light page background. */
   --surface: #ffffff;
   --surface-sunken: #e4e8f5;
+
+  /*
+   * The one stacking-order scale for every fixed/sticky element in the app —
+   * reference these with Tailwind's arbitrary-value syntax (e.g.
+   * `z-[var(--z-header)]`) rather than a bare z-10/z-20/z-50. An overlapping
+   * stacking context (a countdown vanishing behind the header, a toast
+   * covering the bottom nav) is almost always two elements that each picked
+   * their own number independently — this file is the only place that's
+   * allowed to happen now.
+   */
+  --z-sticky: 10; /* in-page sticky elements: countdown bar, "your position" row, sticky table column */
+  --z-header: 20; /* top bar */
+  --z-bottom-nav: 20; /* bottom tab bar — never on screen at the same time as a sticky element above, so it can share the header's layer */
+  --z-dropdown: 30; /* avatar menu, filter dropdowns */
+  --z-drawer-backdrop: 40;
+  --z-drawer: 41; /* admin hamburger drawer */
+  --z-toast: 50; /* always above everything except a native <dialog>, which the UA renders in the top layer regardless of z-index */
+
+  /* Real height of the mobile bottom tab bar (see MemberBottomNav) — scrollable
+     content and any other fixed-bottom element (the toast stack, a sticky
+     "your position" row) pad/offset by this plus the safe-area inset so
+     nothing sits underneath it. */
+  --bottom-nav-height: 4rem;
 }
 
 @theme inline {
@@ -47,6 +70,24 @@ body {
 .numeric {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The mobile bottom tab bar (MemberBottomNav) is fixed, so it covers the
+ * bottom of whatever's scrolling underneath it unless that content is padded
+ * by the bar's real height plus the safe-area inset.
+ */
+.pb-bottom-nav {
+  padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px));
+}
+
+/* The bottom bar's own bottom padding — keeps its tap targets above the iOS home indicator. */
+.pb-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* Accessibility floor: a visible focus ring on every interactive element, not

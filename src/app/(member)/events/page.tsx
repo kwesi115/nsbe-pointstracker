@@ -2,7 +2,7 @@ import { CalendarClock } from "lucide-react";
 import { redirect } from "next/navigation";
 import EventCard from "@/components/events/EventCard";
 import EmptyState from "@/components/ui/EmptyState";
-import { closedRecently, isOpen } from "@/lib/points";
+import { closedRecently, isEboardOrAdmin, isOpen } from "@/lib/points";
 import { getEvents, getMemberHistory } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
 
@@ -19,7 +19,7 @@ export default async function EventsPage() {
   // Registration_userId_idx) — not the whole chapter's attendance log.
   const [events, history] = await Promise.all([getEvents(orgId), getMemberHistory(orgId, email)]);
   // EBOARD_ONLY events never appear in a GENERAL member's feed — see Part 1/5.
-  const canSeeEboardOnly = session.user.role === "eboard" || session.user.role === "admin";
+  const canSeeEboardOnly = isEboardOrAdmin(session.user.role);
   const scheduled = events.filter((e) => e.status === "scheduled" && (e.audience === "all" || canSeeEboardOnly));
   const registeredIds = new Set(history.map((a) => a.eventId));
 

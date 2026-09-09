@@ -51,7 +51,3 @@ export function codeFromName(name: string): string {
     .replace(/^_+|_+$/g, "");
   return code || "HOUSE";
 }
-
-export function houseColor(houses: House[], name: string): string | undefined {
-  return houses.find((h) => h.name === name)?.color;
-}

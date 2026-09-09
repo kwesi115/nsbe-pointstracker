@@ -31,6 +31,7 @@ import {
 } from "../src/generated/prisma/enums";
 import { generateSetupCode, hashPassword } from "../src/lib/passwords";
 import { CORE_FORM_VERSION } from "../src/lib/core-form";
+import { normalizeEmail } from "../src/lib/email";
 import { DEFAULT_HOUSES, serializeHouses } from "../src/lib/houses";
 import { storage } from "../src/lib/storage";
 
@@ -221,8 +222,6 @@ async function seedConfig(orgId: string) {
     // seed (update: {} in the loop below), so an admin's edit at
     // /admin/settings survives every future reseed.
     ADMIN_EMAIL_ALLOWLIST: HARDCODED_ADMINS.map((a) => a.email).join("|"),
-    LEADERBOARD_SHOW_FULL_NAMES: "false",
-    CORE_FORM_VERSION: String(CORE_FORM_VERSION),
     MAJORS_LIST: MAJORS.join("|"),
     HOUSES_LIST: serializeHouses(DEFAULT_HOUSES),
     MEMBERSHIP_SITE_URL: "https://howardnsbe.org/membership",
@@ -319,7 +318,7 @@ async function seedInitialAdmins(orgId: string) {
   const raw = process.env.INITIAL_ADMIN_EMAILS ?? "";
   const emails = raw
     .split(",")
-    .map((e) => e.trim().toLowerCase())
+    .map((e) => normalizeEmail(e))
     .filter(Boolean);
 
   if (emails.length === 0) {
@@ -357,9 +356,16 @@ async function seedInitialAdmins(orgId: string) {
 }
 
 /**
- * The seven Howard NSBE officer accounts (see HARDCODED_ADMINS above).
+ * The seven Howard NSBE officer accounts (see HARDCODED_ADMINS above). These
+ * seven share the seed password by design — see docs/DEPLOY.md — so unlike
+ * every other admin-provisioned account, mustChangePassword is deliberately
+ * left false: an officer signs in with the seeded password and reaches
+ * /admin directly, no forced reset step. The mustChangePassword mechanism
+ * itself is still very much alive elsewhere (INITIAL_ADMIN_EMAILS below,
+ * setup codes from /admin/members) — it's only these seven that opt out.
+ *
  * Idempotent, keyed on (orgId, email):
- *   - account absent  -> create it: ADMIN, ACTIVE, mustChangePassword=true,
+ *   - account absent  -> create it: ADMIN, ACTIVE, mustChangePassword=false,
  *     passwordHash = bcrypt(SEED_ADMIN_PASSWORD ?? "howard1867"). firstName is
  *     the position (so the roster shows something readable before the
  *     officer sets their real name); lastName is blank.
@@ -397,7 +403,7 @@ async function seedHardcodedAdmins(orgId: string): Promise<void> {
         lastName: "",
         role: Role.ADMIN,
         status: UserStatus.ACTIVE,
-        mustChangePassword: true,
+        mustChangePassword: false,
         eboardPosition,
       },
     });
@@ -416,8 +422,8 @@ async function seedHardcodedAdmins(orgId: string): Promise<void> {
   }
   if (created.length > 0) {
     for (const email of created) console.log(`  created: ${email}`);
-    console.log(`  Default password for newly created accounts: ${password}`);
-    console.log("  Each must change their password at first login (mustChangePassword is set) before reaching /admin.");
+    console.log(`  Shared seed password for newly created accounts: ${password}`);
+    console.log("  Signs in with that password and reaches /admin directly — mustChangePassword is intentionally NOT set for these seven.");
   }
 }
 
@@ -433,7 +439,7 @@ async function seedEboardEmails(orgId: string) {
   const raw = process.env.EBOARD_EMAILS ?? "";
   const emails = raw
     .split(",")
-    .map((e) => e.trim().toLowerCase())
+    .map((e) => normalizeEmail(e))
     .filter(Boolean);
 
   if (emails.length === 0) {
@@ -1022,6 +1028,33 @@ async function seedBonusAwards(orgId: string, generalEmails: string[], pastEvent
   console.log("Seeded 2 game bonuses and 1 materialized monthly champion.");
 }
 
+/**
+ * Everything safe to run against a real production database: identity (Org),
+ * the point-value catalog (EventCategory), Config, JoinCodes, and every real
+ * admin account — the seven hardcoded officers, INITIAL_ADMIN_EMAILS'
+ * one-time bootstrap list, and the EBOARD_EMAILS standing roster. Nothing
+ * here creates a member, event, registration, or any other data a real
+ * chapter's season would generate — that's seedFakeData()'s job, and it's
+ * never called from here.
+ */
+async function seedProduction(): Promise<{ orgId: string; categoryIds: Map<string, string> }> {
+  const orgId = await seedOrg();
+  const categoryIds = await seedCategories(orgId);
+  await seedConfig(orgId);
+  await seedJoinCodes(orgId);
+  await seedHardcodedAdmins(orgId);
+  await seedInitialAdmins(orgId);
+  await seedEboardEmails(orgId);
+  return { orgId, categoryIds };
+}
+
+/**
+ * Everything else: fake members, fake events, fake registrations, fake
+ * awards — a full dev/demo season. Never safe against production (see the
+ * NODE_ENV guard in main() below); gated behind SEED_FAKE=true, not just
+ * SEED_FAKE being set, so a stray `SEED_FAKE=` in an inherited shell
+ * environment can't silently turn this on.
+ */
 async function seedFakeData(orgId: string, categoryIds: Map<string, string>) {
   const generalEmails = await seedFakeMembers(orgId);
   const eboardEmails = await seedFakeEboardMembers(orgId);
@@ -1032,16 +1065,17 @@ async function seedFakeData(orgId: string, categoryIds: Map<string, string>) {
 }
 
 async function main() {
-  const orgId = await seedOrg();
-  const categoryIds = await seedCategories(orgId);
-  await seedConfig(orgId);
-  await seedJoinCodes(orgId);
-  await seedHardcodedAdmins(orgId);
-  await seedInitialAdmins(orgId);
-  await seedEboardEmails(orgId);
+  const { orgId, categoryIds } = await seedProduction();
 
-  if (process.env.SEED_FAKE) {
-    console.log("\nSEED_FAKE set — seeding dev fake data...");
+  if (process.env.SEED_FAKE === "true") {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "Refusing to run: SEED_FAKE=true and NODE_ENV=production. Fake members/events/registrations must never be " +
+          "seeded into a production database. If this really is a non-production database that merely has " +
+          "NODE_ENV=production set, unset it (or use a separate env file) and re-run.",
+      );
+    }
+    console.log("\nSEED_FAKE=true — seeding dev fake data...");
     await seedFakeData(orgId, categoryIds);
   }
 }

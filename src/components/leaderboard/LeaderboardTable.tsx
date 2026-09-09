@@ -60,14 +60,18 @@ function Row({
         className="flex w-full items-center gap-4 px-3 py-2.5 text-left"
         aria-expanded={expanded}
       >
-        <span className="numeric w-8 shrink-0 text-right text-sm font-semibold text-muted">{s.rank}</span>
+        <span className="numeric w-7 shrink-0 text-right text-sm font-semibold text-muted">{s.rank}</span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-ink">{displayName(s)}</p>
-          <div className="mt-1 h-1.5 w-full rounded-full bg-surface-sunken">
-            <div className="h-1.5 rounded-full bg-signal" style={{ width: `${share * 100}%` }} />
+          {/* Event count moves down here, off the primary rank/name/points line — the only three
+              things that must fit at 320px (see task: row layout must work at 320px). */}
+          <div className="mt-1 flex items-center gap-2">
+            <div className="h-1.5 min-w-0 flex-1 rounded-full bg-surface-sunken">
+              <div className="h-1.5 rounded-full bg-signal" style={{ width: `${share * 100}%` }} />
+            </div>
+            <span className="numeric shrink-0 text-xs text-muted">{s.events} ev</span>
           </div>
         </div>
-        <span className="numeric w-10 shrink-0 text-right text-xs text-muted">{s.events} ev</span>
         <span className="numeric w-12 shrink-0 text-right text-base font-semibold text-ink">{s.points}</span>
       </button>
       {expanded ? <BreakdownDetail breakdown={s.breakdown} /> : null}
@@ -132,7 +136,10 @@ export default function LeaderboardTable({
       </div>
 
       {me && !meVisible ? (
-        <div className="sticky bottom-2 rounded-xl border border-signal bg-surface p-2 shadow-lg">
+        // Clears MemberBottomNav's fixed mobile tab bar (+ the safe area) —
+        // "bottom-2" alone would park this row underneath it. md:bottom-2
+        // restores the original tight offset once that bar is md:hidden.
+        <div className="sticky bottom-[calc(var(--bottom-nav-height)+env(safe-area-inset-bottom,0px)+0.5rem)] z-[var(--z-sticky)] rounded-xl border border-signal bg-surface p-2 shadow-lg md:bottom-2">
           <Row s={me} leaderPoints={leaderPoints} highlight expanded={expandedEmail === me.email} onToggle={() => toggle(me.email)} />
         </div>
       ) : null}

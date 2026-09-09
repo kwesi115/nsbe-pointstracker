@@ -1,7 +1,10 @@
 import { useId, type ReactNode } from "react";
 
+// text-base (16px), not text-sm (14px): iOS Safari auto-zooms the whole page
+// on focus of any input under 16px, which shifts the layout mid-form. Only
+// safe to drop to 14px at md: and up, where there's no touch-zoom to trigger.
 export const inputClass =
-  "min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus-visible:border-signal disabled:opacity-50";
+  "min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-base text-ink placeholder:text-muted focus-visible:border-signal disabled:opacity-50 md:text-sm";
 
 export const selectClass = inputClass;
 export const textareaClass = `${inputClass} min-h-24`;

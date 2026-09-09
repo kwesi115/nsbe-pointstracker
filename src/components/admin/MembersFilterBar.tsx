@@ -129,7 +129,17 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
           </button>
 
           {open ? (
-            <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-line bg-white p-4 shadow-lg">
+            <>
+              {/* Below sm:, this is a bottom sheet (full width, pinned to the
+                  viewport) rather than a 320px-wide popover that would
+                  otherwise run off the edge of a 320px phone screen. */}
+              <button
+                type="button"
+                aria-label="Close filters"
+                onClick={() => setOpen(false)}
+                className="fixed inset-0 z-[var(--z-drawer-backdrop)] bg-ink/50 sm:hidden"
+              />
+              <div className="pb-safe-bottom fixed inset-x-0 bottom-0 z-[var(--z-drawer)] max-h-[85dvh] overflow-y-auto rounded-t-2xl border border-line bg-white p-4 shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:max-h-none sm:w-80 sm:rounded-xl">
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1 text-xs font-medium text-muted">
                   Status
@@ -196,7 +206,8 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
                   Clear all filters
                 </button>
               ) : null}
-            </div>
+              </div>
+            </>
           ) : null}
         </div>
       </div>

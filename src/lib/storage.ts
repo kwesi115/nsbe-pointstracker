@@ -20,6 +20,7 @@ export interface StoredFile {
 export interface StorageDriver {
   put(input: { buffer: Buffer; kind: FileKind; extension: string }): Promise<StoredFile>;
   read(storageKey: string): Promise<Buffer>;
+  delete(storageKey: string): Promise<void>;
 }
 
 const UPLOADS_ROOT = path.resolve(process.cwd(), ".uploads");
@@ -39,6 +40,16 @@ const localDiskDriver: StorageDriver = {
     if (!resolved.startsWith(UPLOADS_ROOT)) throw new Error("Invalid storage key");
     return readFile(resolved);
   },
+  async delete(storageKey) {
+    const resolved = path.resolve(UPLOADS_ROOT, storageKey);
+    if (!resolved.startsWith(UPLOADS_ROOT)) throw new Error("Invalid storage key");
+    const { unlink } = await import("node:fs/promises");
+    try {
+      await unlink(resolved);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  },
 };
 
 const vercelBlobDriver: StorageDriver = {
@@ -52,6 +63,10 @@ const vercelBlobDriver: StorageDriver = {
     const res = await fetch(storageKey);
     if (!res.ok) throw new Error(`Failed to read blob: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
+  },
+  async delete(storageKey) {
+    const { del } = await import("@vercel/blob");
+    await del(storageKey);
   },
 };
 
