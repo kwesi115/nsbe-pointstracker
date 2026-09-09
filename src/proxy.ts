@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { assertRequiredEnv } from "@/lib/env";
 import { GUEST_PASS_COOKIE, verifyGuestPassValue } from "@/lib/guest-pass";
 import { ORG_COOKIE } from "@/lib/org";
 
@@ -22,6 +23,8 @@ function isOrgRequiredPath(pathname: string): boolean {
 }
 
 export async function proxy(request: NextRequest) {
+  assertRequiredEnv();
+
   const { pathname, search } = request.nextUrl;
 
   // Stamped on every request so (public)/layout.tsx can special-case "/"
