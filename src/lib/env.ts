@@ -16,12 +16,37 @@ import { z } from "zod";
  * AUTH_SECRET/CODE_SECRET, or every DB-only code path (tests, scripts, a future
  * isolated worker) would fail on secrets it never uses. getRuntimeEnv() is the
  * full blanket check src/proxy.ts runs on (almost) every request.
+ *
+ * STORAGE_DRIVER/BLOB_READ_WRITE_TOKEN are validated here too, but only in a
+ * production runtime (see isProductionRuntime()) — in dev/test they're
+ * genuinely optional (src/lib/storage.ts's own local-disk driver handles
+ * that case). This duplicates src/lib/storage.ts's own guard on purpose:
+ * that one only fires on the first actual upload/read/delete call, deep
+ * inside a request; this one fires on (almost) every request via
+ * src/proxy.ts, so a misconfigured deployment fails on its very first hit
+ * instead of only when someone happens to upload a file.
  */
-const runtimeEnvSchema = z.object({
-  DATABASE_URL: z.string().min(1, "DATABASE_URL is not set"),
-  AUTH_SECRET: z.string().min(1, "AUTH_SECRET is not set"),
-  CODE_SECRET: z.string().min(1, "CODE_SECRET is not set"),
-});
+function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
+}
+
+const runtimeEnvSchema = z
+  .object({
+    DATABASE_URL: z.string().min(1, "DATABASE_URL is not set"),
+    AUTH_SECRET: z.string().min(1, "AUTH_SECRET is not set"),
+    CODE_SECRET: z.string().min(1, "CODE_SECRET is not set"),
+    STORAGE_DRIVER: z.string().optional(),
+    BLOB_READ_WRITE_TOKEN: z.string().optional(),
+  })
+  .superRefine((env, ctx) => {
+    if (!isProductionRuntime()) return;
+    if (env.STORAGE_DRIVER !== "vercel-blob") {
+      ctx.addIssue({ code: "custom", path: ["STORAGE_DRIVER"], message: 'STORAGE_DRIVER must be "vercel-blob" in production' });
+    }
+    if (!env.BLOB_READ_WRITE_TOKEN) {
+      ctx.addIssue({ code: "custom", path: ["BLOB_READ_WRITE_TOKEN"], message: "BLOB_READ_WRITE_TOKEN is not set" });
+    }
+  });
 
 export type RuntimeEnv = z.infer<typeof runtimeEnvSchema>;
 
