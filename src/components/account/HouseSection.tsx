@@ -8,10 +8,11 @@ import Card from "@/components/ui/Card";
 import ConfirmationRow from "@/components/ui/ConfirmationRow";
 import { HouseLabel } from "@/components/ui/HouseDot";
 import { useToast } from "@/components/ui/Toast";
+import { houseSelfVerifies } from "@/lib/core-form";
 import type { House } from "@/lib/houses";
 import type { Member } from "@/lib/types";
 
-type HouseMember = Pick<Member, "house" | "houseVerifiedAt">;
+type HouseMember = Pick<Member, "role" | "house" | "houseVerifiedAt">;
 
 /** Verified House is locked — the only path to change it is an admin correction (/admin/members/[id]). Unverified shows the same House block used at check-in and signup. */
 export default function HouseSection({
@@ -28,13 +29,18 @@ export default function HouseSection({
   const { show } = useToast();
 
   const verified = member.houseVerifiedAt !== null;
+  // Same shared rule HouseBlock renders from — an E-Board member has no
+  // upload to wait for, and their save verifies immediately rather than
+  // queueing for review.
+  const selfVerifies = houseSelfVerifies(member.role);
+  const canSave = Boolean(value.house) && (selfVerifies || Boolean(value.houseProofFileId));
 
   function save() {
-    if (!value.house || !value.houseProofFileId) return;
+    if (!canSave) return;
     startTransition(async () => {
-      const result = await setHouseAction(value.house!, value.houseProofFileId!);
+      const result = await setHouseAction(value.house!, value.houseProofFileId);
       if (result.error) show(result.error, "error");
-      else show("House submitted — pending E-Board review");
+      else show(selfVerifies ? "House saved" : "House submitted — pending E-Board review");
     });
   }
 
@@ -69,13 +75,22 @@ export default function HouseSection({
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {member.house && !value.houseSkipped ? <p className="text-xs text-muted">Submitted — pending E-Board review.</p> : null}
-            <HouseBlock houses={houses} houseTestUrl={houseTestUrl} value={value} onChange={handleChange} disabled={isPending} />
+            {member.house && !value.houseSkipped ? (
+              <p className="text-xs text-muted">Submitted — pending E-Board review.</p>
+            ) : null}
+            <HouseBlock
+              houses={houses}
+              houseTestUrl={houseTestUrl}
+              role={member.role}
+              value={value}
+              onChange={handleChange}
+              disabled={isPending}
+            />
             {!value.houseSkipped ? (
               <Button
                 type="button"
                 onClick={save}
-                disabled={isPending || !value.house || !value.houseProofFileId}
+                disabled={isPending || !canSave}
                 className="self-start"
               >
                 {isPending ? "Saving…" : "Submit"}

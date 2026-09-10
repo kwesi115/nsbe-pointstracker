@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getMissingFields,
+  houseSelfVerifies,
   parseDescription,
   resolveDescription,
   validateCoreAnswers,
@@ -11,6 +12,7 @@ import {
 } from "./core-form";
 import { AppError } from "./errors";
 import type { House } from "./houses";
+import type { Role } from "./types";
 
 const SEASON = "2026-2027";
 
@@ -41,8 +43,9 @@ const COMPLETE_USER: GetMissingFieldsUser = {
 const ALL_EVENT = { audience: "all" as const };
 const EBOARD_EVENT = { audience: "eboard_only" as const };
 
-function ctxFor(missing: CoreFieldKey[]): CoreFormValidationContext {
+function ctxFor(missing: CoreFieldKey[], role: Role = "general"): CoreFormValidationContext {
   return {
+    role,
     majors: ["Computer Science", "Electrical Engineering"],
     houses: TEST_HOUSES,
     missing: new Set(missing),
@@ -268,6 +271,15 @@ describe("getMissingFields", () => {
   });
 });
 
+describe("houseSelfVerifies — the one House role rule", () => {
+  it("is true for EBOARD only", () => {
+    expect(houseSelfVerifies("eboard")).toBe(true);
+    expect(houseSelfVerifies("general")).toBe(false);
+    expect(houseSelfVerifies("admin")).toBe(false);
+    expect(houseSelfVerifies("guest")).toBe(false);
+  });
+});
+
 describe("validateCoreAnswers", () => {
   it("classification/major aren't required when getMissingFields didn't ask for them", () => {
     const ctx = ctxFor([]);
@@ -374,6 +386,23 @@ describe("validateCoreAnswers", () => {
   it("an explicit skip is a complete, valid answer on its own, even while House is missing", () => {
     const ctx = ctxFor(["house"]);
     expect(() => validateCoreAnswers(ctx, validAnswers({ houseSkipped: true }))).not.toThrow();
+  });
+
+  it("an EBOARD member's House is accepted with no screenshot; a GENERAL member's is not", () => {
+    const answers = validAnswers({ house: "House Turing" });
+    expect(() => validateCoreAnswers(ctxFor(["house"], "eboard"), answers)).not.toThrow();
+    expect(() => validateCoreAnswers(ctxFor(["house"], "general"), answers)).toThrow(AppError);
+  });
+
+  it("the House itself is still required of an EBOARD member — only the upload requirement is dropped", () => {
+    expect(() => validateCoreAnswers(ctxFor(["house"], "eboard"), validAnswers())).toThrow(AppError);
+    expect(() => validateCoreAnswers(ctxFor(["house"], "eboard"), validAnswers({ houseSkipped: true }))).not.toThrow();
+  });
+
+  it("an unknown House name is rejected for EBOARD too — no upload is not no validation", () => {
+    expect(() => validateCoreAnswers(ctxFor(["house"], "eboard"), validAnswers({ house: "House Nope" }))).toThrow(
+      AppError,
+    );
   });
 
   it("studentId/phone/personalEmail ARE required when getMissingFields asked for them", () => {

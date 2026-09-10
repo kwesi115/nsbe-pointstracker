@@ -284,10 +284,11 @@ export async function updateMembershipAction(input: {
 /**
  * Step 7 — House. No Yes/No question (Part 1 restructure): an explicit skip
  * ("I haven't taken the test yet") — both arguments omitted — is itself a
- * complete, valid answer. It writes nothing (house stays null), and
- * getMissingFields re-asks at the member's next check-in. Providing a House
- * requires the screenshot and vice versa, checked here independently of
- * whatever the client already validated.
+ * complete, valid answer for every role. It writes nothing (house stays
+ * null), and getMissingFields re-asks at the member's next check-in.
+ * Providing a House requires the screenshot and vice versa, re-checked
+ * server-side independently of whatever the client already validated —
+ * except for a role that self-verifies, where the House alone is complete.
  */
 export async function setHouseAction(house?: string, houseProofFileId?: string): Promise<JoinStepState> {
   const session = await requireWizardSession();
@@ -301,9 +302,10 @@ export async function setHouseAction(house?: string, houseProofFileId?: string):
   if (!trimmedHouse || !houses.some((h) => h.name === trimmedHouse)) {
     return { error: "Select your House." };
   }
-  if (!houseProofFileId) {
-    return { error: "Upload your House test result." };
-  }
+  // Whether a screenshot is required is decided by the roster role inside
+  // setHouseAssignment (see lib/core-form.ts houseSelfVerifies) — checking
+  // it here would mean trusting this request's session role and would put a
+  // second copy of the rule in the codebase.
 
   try {
     await setHouseAssignment(session.user.orgId, session.user.email, trimmedHouse, houseProofFileId, session.user.email);

@@ -425,6 +425,7 @@ export default function CoreCheckInForm({
           <HouseBlock
             houses={config.houses}
             houseTestUrl={config.houseTestUrl}
+            role={member.role}
             value={{
               house: value.house,
               houseProofFileId: value.houseProofFileId,

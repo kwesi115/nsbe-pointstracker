@@ -21,6 +21,7 @@ import {
   awardGameBonus,
   calculateMonthlyChampions,
   canAccessFile,
+  clearHouseAssignment,
   correctHouse,
   getAdminLog,
   getEboardBoardRows,
@@ -40,6 +41,8 @@ import {
   saveFormFields,
   setConfigValue,
   setDuesReported,
+  getHousePendingMembers,
+  HOUSE_SYSTEM_VERIFIER,
   setHouseAssignment,
   setMemberRole,
   setNationalReported,
@@ -864,6 +867,94 @@ describe("setHouseAssignment / correctHouse — verified House lock (Part 5/6)",
     expect(entry).toBeDefined();
     expect(entry!.detail).toContain("House Hamilton");
     expect(entry!.detail).toContain("member picked the wrong House at signup");
+  });
+});
+
+describe("E-Board House — verified on selection, no screenshot", () => {
+  it("an EBOARD member sets a House with no upload, and it is verified immediately by the system", async () => {
+    const officer = await makeUser({ role: Role.EBOARD });
+
+    await setHouseAssignment(orgId, officer.email, "House Turing", undefined, officer.email);
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: officer.id } });
+    expect(row.house).toBe("House Turing");
+    expect(row.houseVerifiedAt).not.toBeNull();
+    expect(row.houseVerifiedById).toBe(HOUSE_SYSTEM_VERIFIER);
+    // No proof row to point at — there was never an upload.
+    expect(row.houseProofFileId).toBeNull();
+  });
+
+  it("that House is then locked to them on the same terms as any verified House", async () => {
+    const officer = await makeUser({ role: Role.EBOARD });
+    await setHouseAssignment(orgId, officer.email, "House Turing", undefined, officer.email);
+
+    await expect(
+      setHouseAssignment(orgId, officer.email, "House Hamilton", undefined, officer.email),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // The skip control can't back them out of it either.
+    await expect(clearHouseAssignment(orgId, officer.email, officer.email)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    // Only an admin correction gets through.
+    await correctHouse(orgId, officer.email, "House Hamilton", "officer asked to switch", "admin@bison.howard.edu");
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: officer.id } });
+    expect(row.house).toBe("House Hamilton");
+  });
+
+  it("a GENERAL member still cannot set a House without the screenshot, and stays pending once they do", async () => {
+    const member = await makeUser();
+
+    await expect(setHouseAssignment(orgId, member.email, "House Turing", undefined, member.email)).rejects.toMatchObject(
+      { code: "VALIDATION_FAILED" },
+    );
+
+    await setHouseAssignment(orgId, member.email, "House Turing", "file_1", member.email);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: member.id } });
+    expect(row.houseVerifiedAt).toBeNull();
+    expect(row.houseVerifiedById).toBeNull();
+    expect(row.houseProofFileId).toBe("file_1");
+  });
+
+  it("the verification queue lists the pending GENERAL House and no EBOARD House at all", async () => {
+    const member = await makeUser();
+    const officer = await makeUser({ role: Role.EBOARD });
+    await setHouseAssignment(orgId, member.email, "House Turing", "file_1", member.email);
+    await setHouseAssignment(orgId, officer.email, "House Hamilton", undefined, officer.email);
+
+    const pending = await getHousePendingMembers(orgId);
+    const emails = pending.map((m) => m.email);
+    expect(emails).toContain(member.email);
+    expect(emails).not.toContain(officer.email);
+  });
+
+  it("the 'haven't taken it yet' skip leaves no House for either role — and is not a verified state", async () => {
+    for (const role of [Role.GENERAL, Role.EBOARD]) {
+      const user = await makeUser({ role });
+      // The skip writes nothing at all; clearHouseAssignment is the /account
+      // variant that also backs out a previously-submitted House.
+      await clearHouseAssignment(orgId, user.email, user.email);
+
+      const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(row.house).toBeNull();
+      expect(row.houseVerifiedAt).toBeNull();
+    }
+  });
+
+  it("promoting a GENERAL member with a pending House does NOT retroactively verify it", async () => {
+    const member = await makeUser();
+    await setHouseAssignment(orgId, member.email, "House Turing", "file_1", member.email);
+
+    await setMemberRole(orgId, member.email, "eboard", "admin@bison.howard.edu");
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: member.id } });
+    expect(row.role).toBe(Role.EBOARD);
+    // Still pending — the screenshot they already uploaded still gets reviewed.
+    expect(row.houseVerifiedAt).toBeNull();
+    expect(row.houseProofFileId).toBe("file_1");
+    // ...but they've left the queue, which only ever lists GENERAL members.
+    const pending = await getHousePendingMembers(orgId);
+    expect(pending.map((m) => m.email)).not.toContain(member.email);
   });
 });
 

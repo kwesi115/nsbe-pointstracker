@@ -188,6 +188,27 @@ export const CORE_FORM_FIELDS: CoreFormField[] = [
   },
 ];
 
+/**
+ * THE role rule for the NSBE House, defined once and consulted everywhere:
+ * HouseBlock.tsx (what to render), joinWizardRules.ts validateHouseStep and
+ * buildCoreFormSchema below (what to require), and lib/repo.ts
+ * setHouseAssignment/registerForEvent (what to write). No surface re-derives
+ * it from a role comparison of its own.
+ *
+ * An E-Board member picks a House from the dropdown with no screenshot, and
+ * it is verified at the moment of selection — officers are known to the
+ * chapter, so there is nobody for them to prove it to. Everyone else uploads
+ * proof and stays pending until an admin reviews it.
+ *
+ * Self-verification happens ONLY at selection time. Promoting a GENERAL
+ * member who already has a pending House does not retroactively verify it —
+ * setMemberRole touches `role` and nothing else, and the screenshot they
+ * already uploaded still gets reviewed.
+ */
+export function houseSelfVerifies(role: Role): boolean {
+  return role === "eboard";
+}
+
 export function coreField(id: string): CoreFormField {
   const field = CORE_FORM_FIELDS.find((f) => f.id === id);
   if (!field) throw new Error(`Unknown core form field: ${id}`);
@@ -347,6 +368,8 @@ export interface CoreFormAnswers {
 }
 
 export interface CoreFormValidationContext {
+  /** The CURRENT roster role — only consulted through houseSelfVerifies. */
+  role: Role;
   majors: string[];
   houses: House[];
   /** What getMissingFields decided to ask this member — the ONLY thing that decides which fields are required below. */
@@ -425,12 +448,14 @@ export function buildCoreFormSchema(ctx: CoreFormValidationContext) {
       // No more Yes/No question — an explicit skip is a complete, valid
       // answer on its own (house stays null). Otherwise a House and its
       // screenshot are required TOGETHER: one without the other is unusable
-      // (an unverifiable House, or an orphaned screenshot).
+      // (an unverifiable House, or an orphaned screenshot). An E-Board
+      // member has no screenshot to pair it with, so the House alone is the
+      // complete answer for them — see houseSelfVerifies.
       if (missing.has("house") && !data.houseSkipped) {
         if (!data.house || !ctx.houses.some((h) => h.name === data.house)) {
           ctxRefine.addIssue({ code: "custom", path: ["house"], message: "Select your House" });
         }
-        if (!data.houseProofFileId) {
+        if (!houseSelfVerifies(ctx.role) && !data.houseProofFileId) {
           ctxRefine.addIssue({ code: "custom", path: ["houseProofFileId"], message: "Upload your House test result" });
         }
       }

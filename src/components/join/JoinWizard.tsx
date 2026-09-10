@@ -818,16 +818,24 @@ function HouseStep({
   onBack: () => void;
   onNext: () => void;
 }) {
+  // Always set by the time this step renders — the account exists and
+  // AccountStep wrote the DB-confirmed role. Falls back to the role that
+  // requires the most (general) rather than assuming an exemption; the
+  // server re-derives from the roster either way.
+  const role: Role = draft.resolvedRole ?? "general";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
 
   async function submit() {
-    const validationError = validateHouseStep({
-      houseSkipped: draft.houseSkipped,
-      house: draft.house,
-      houseProofFileId: draft.houseProofFileId,
-    });
+    const validationError = validateHouseStep(
+      {
+        houseSkipped: draft.houseSkipped,
+        house: draft.house,
+        houseProofFileId: draft.houseProofFileId,
+      },
+      role,
+    );
     if (validationError) {
       setError(validationError);
       return;
@@ -859,6 +867,7 @@ function HouseStep({
       <HouseBlock
         houses={houses}
         houseTestUrl={houseTestUrl}
+        role={role}
         value={{
           house: draft.house || undefined,
           houseProofFileId: draft.houseProofFileId,

@@ -9,30 +9,54 @@
 import { describe, expect, it } from "vitest";
 import { stepsFor, validateHouseStep } from "./joinWizardRules";
 
-describe("validateHouseStep — no Yes/No question; House+screenshot together, or an explicit skip", () => {
+describe("validateHouseStep — GENERAL needs House+screenshot together, or an explicit skip", () => {
   it("blocks a House selection with no screenshot", () => {
     expect(
-      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }),
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "general"),
     ).toBeTruthy();
   });
 
   it("blocks a screenshot with no House selection", () => {
-    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: "file_1" })).toBeTruthy();
+    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: "file_1" }, "general")).toBeTruthy();
   });
 
   it("blocks neither House nor screenshot when not skipped", () => {
-    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined })).toBeTruthy();
+    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined }, "general")).toBeTruthy();
   });
 
   it("allows a House once both a House and a screenshot are present", () => {
     expect(
-      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: "file_1" }),
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: "file_1" }, "general"),
     ).toBeNull();
   });
 
   it("allows an explicit skip on its own — it's a complete, valid answer, even with stray partial fields", () => {
-    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined })).toBeNull();
-    expect(validateHouseStep({ houseSkipped: true, house: "House Turing", houseProofFileId: "file_1" })).toBeNull();
+    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined }, "general")).toBeNull();
+    expect(
+      validateHouseStep({ houseSkipped: true, house: "House Turing", houseProofFileId: "file_1" }, "general"),
+    ).toBeNull();
+  });
+});
+
+describe("validateHouseStep — EBOARD selects a House with no upload", () => {
+  it("a House alone is a complete answer — no screenshot required", () => {
+    expect(
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "eboard"),
+    ).toBeNull();
+  });
+
+  it("the step is still mandatory — neither a House nor a skip is not a way through", () => {
+    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined }, "eboard")).toBeTruthy();
+  });
+
+  it("the skip still works — a new officer who hasn't taken the test gets asked again at check-in", () => {
+    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined }, "eboard")).toBeNull();
+  });
+
+  it("ADMIN is not exempt from the upload — only EBOARD is, and ADMIN never reaches this step anyway", () => {
+    expect(
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "admin"),
+    ).toBeTruthy();
   });
 });
 
@@ -70,10 +94,14 @@ describe("stepsFor — General needs no code step; only ADMIN skips any profile 
     }
   });
 
-  it("the House step is mandatory for EBOARD — validateHouseStep still gates it, skip still valid", () => {
+  it("the House step is mandatory for EBOARD — a House or the skip, but not neither", () => {
     expect(EBOARD_STEPS).toContain("house");
-    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined })).toBeTruthy();
-    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined })).toBeNull();
+    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined }, "eboard")).toBeTruthy();
+    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined }, "eboard")).toBeNull();
+    // ...and a House alone gets them through, with no upload.
+    expect(
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "eboard"),
+    ).toBeNull();
   });
 
   it("an ADMIN signup skips about-you, contact, membership, House, and resume", () => {

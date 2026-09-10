@@ -51,7 +51,7 @@ import type {
 } from "@/generated/prisma/models";
 import { verifyCode } from "./code";
 import { AppError } from "./errors";
-import { CORE_FORM_VERSION, getMissingFields, validateCoreAnswers, validateReducedCoreAnswers } from "./core-form";
+import { CORE_FORM_VERSION, getMissingFields, houseSelfVerifies, validateCoreAnswers, validateReducedCoreAnswers } from "./core-form";
 import { validateAnswers, serializeAnswers } from "./forms";
 import { parseHouses, type House } from "./houses";
 import { generateSetupCode, hashPassword, verifyPassword } from "./passwords";
@@ -1486,6 +1486,15 @@ export async function setNationalReported(
 }
 
 /**
+ * houseVerifiedById when an E-Board member's House is verified on selection.
+ * Every other *VerifiedById/*RevokedById column holds a User id resolved
+ * from the acting admin's email (see revokeDues); there is no acting admin
+ * here, so this records the system as the verifier. The column is a plain
+ * nullable String with no foreign key, and nothing reads it back today.
+ */
+export const HOUSE_SYSTEM_VERIFIER = "system";
+
+/**
  * Same "write house+proof together, leave houseVerifiedAt null (pending
  * review)" shape registerForEvent already applies inline for an unverified
  * member — used by signup completion and /account.
@@ -1500,7 +1509,7 @@ export async function setHouseAssignment(
   orgId: string,
   email: string,
   house: string,
-  houseProofFileId: string,
+  houseProofFileId: string | undefined,
   actor: string,
 ): Promise<void> {
   const e = normalizeEmail(email);
@@ -1509,9 +1518,33 @@ export async function setHouseAssignment(
   if (user.houseVerifiedAt !== null) {
     throw new AppError("FORBIDDEN", "Your House is verified — contact an E-Board member to request a change.");
   }
+  // The roster role, never a client-supplied or session-cached one — this is
+  // the enforcement point for houseSelfVerifies, so it reads the same row it
+  // is about to write.
+  const selfVerifies = houseSelfVerifies(roleFromDb(user.role));
+  if (!selfVerifies && !houseProofFileId) {
+    throw new AppError("VALIDATION_FAILED", "Upload your House test result.", {
+      fieldErrors: { houseProofFileId: "Upload your House test result." },
+    });
+  }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { house, houseProofFileId } });
-    await logAdminAction(tx, orgId, { actor, action: "set_house", target: e, detail: house });
+    await tx.user.update({
+      where: { orgId_email: { orgId, email: e } },
+      data: selfVerifies
+        ? // Verified at the moment of selection, with no proof row to point
+          // at. From here it is locked on exactly the same terms as any
+          // admin-verified House — the guard above rejects every later
+          // self-service write, leaving correctHouse as the only way to
+          // change it.
+          { house, houseProofFileId: null, houseVerifiedAt: new Date(), houseVerifiedById: HOUSE_SYSTEM_VERIFIER }
+        : { house, houseProofFileId },
+    });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "set_house",
+      target: e,
+      detail: selfVerifies ? `${house} — verified on selection (E-Board)` : house,
+    });
   });
 }
 
@@ -2400,7 +2433,7 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
   const fullCore = reduced
     ? null
     : validateCoreAnswers(
-        { majors: coreFormConfig.majors, houses: coreFormConfig.houses, missing: missingFields },
+        { role, majors: coreFormConfig.majors, houses: coreFormConfig.houses, missing: missingFields },
         input.core,
       );
   const reducedCore = reduced ? validateReducedCoreAnswers(input.core) : null;
@@ -2513,10 +2546,23 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
               // A House and its screenshot are written TOGETHER, or not at
               // all — see buildCoreFormSchema's house superRefine (Part 1):
               // a skip (or a partial submission the schema didn't require)
-              // leaves house untouched, same as answering "No" used to.
-              ...(user.houseVerifiedAt === null && fullCore.house && fullCore.houseProofFileId
-                ? { house: fullCore.house, houseProofFileId: fullCore.houseProofFileId }
-                : {}),
+              // leaves house untouched, same as answering "No" used to. An
+              // E-Board member has no screenshot to pair it with and is
+              // verified on selection instead — the same houseSelfVerifies
+              // rule setHouseAssignment applies, applied here because this
+              // write is part of the Registration's own transaction.
+              ...(user.houseVerifiedAt !== null || !fullCore.house
+                ? {}
+                : houseSelfVerifies(role)
+                  ? {
+                      house: fullCore.house,
+                      houseProofFileId: null,
+                      houseVerifiedAt: now,
+                      houseVerifiedById: HOUSE_SYSTEM_VERIFIER,
+                    }
+                  : fullCore.houseProofFileId
+                    ? { house: fullCore.house, houseProofFileId: fullCore.houseProofFileId }
+                    : {}),
               ...(fullCore.resumeAction === "upload" && fullCore.resumeFileId
                 ? { resumeFileId: fullCore.resumeFileId, resumeUpdatedAt: now, resumeConsentAt: now }
                 : {}),

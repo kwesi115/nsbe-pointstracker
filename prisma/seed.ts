@@ -92,7 +92,7 @@ const HARDCODED_ADMINS: HardcodedAdminSeed[] = [
   { email: "hunsbepres@gmail.com", eboardPosition: "President" },
   { email: "nsbevphu@gmail.com", eboardPosition: "Vice President" },
   { email: "hunsbeparliamentarian@gmail.com", eboardPosition: "Parliamentarian" },
-  { email: "nsbesecretaryhu@gmail.com", eboardPosition: "Secretary" },
+  { email: "hunsbesecretary@gmail.com", eboardPosition: "Secretary" },
   { email: "nsbetreashu@gmail.com", eboardPosition: "Treasurer" },
 ];
 

@@ -51,8 +51,15 @@ export async function reportNationalAction(): Promise<ActionResult> {
   return run(() => setNationalReported(session.user.orgId, session.user.email, true, session.user.email));
 }
 
-/** Only reachable while unverified — a verified House can only change through an admin correction (/admin/members/[id]). */
-export async function setHouseAction(house: string, houseProofFileId: string): Promise<ActionResult> {
+/**
+ * Only reachable while unverified — a verified House can only change through
+ * an admin correction (/admin/members/[id]), and that includes an E-Board
+ * House verified on selection. houseProofFileId is optional here because
+ * whether it's required is decided by the roster role inside
+ * setHouseAssignment (see lib/core-form.ts houseSelfVerifies), not by the
+ * caller.
+ */
+export async function setHouseAction(house: string, houseProofFileId?: string): Promise<ActionResult> {
   const session = await requireSession();
   return run(() => setHouseAssignment(session.user.orgId, session.user.email, house, houseProofFileId, session.user.email));
 }

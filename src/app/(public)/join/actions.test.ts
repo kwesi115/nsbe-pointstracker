@@ -272,13 +272,6 @@ describe("setHouseAction — no Yes/No question; an explicit skip (both args omi
     requireSessionMock.mockResolvedValue(SESSION);
   });
 
-  it("selecting a House without a screenshot is rejected server-side", async () => {
-    const result = await setHouseAction("House Turing", undefined);
-
-    expect(result.error).toBeTruthy();
-    expect(setHouseAssignmentMock).not.toHaveBeenCalled();
-  });
-
   it("uploading a screenshot without selecting a House is rejected server-side", async () => {
     const result = await setHouseAction(undefined, "file_1");
 
@@ -320,6 +313,33 @@ describe("setHouseAction — no Yes/No question; an explicit skip (both args omi
 
     expect(result.sessionExpired).toBe(true);
     expect(setHouseAssignmentMock).not.toHaveBeenCalled();
+  });
+
+  it("a House with no screenshot reaches setHouseAssignment, which decides on the roster role", async () => {
+    // This action deliberately does NOT check for a proof file — doing so
+    // would mean trusting the session's (cacheable) role and would put a
+    // second copy of the houseSelfVerifies rule here. It forwards, and the
+    // repo enforces against the row it is about to write.
+    const result = await setHouseAction("House Turing");
+
+    expect(result.error).toBeNull();
+    expect(setHouseAssignmentMock).toHaveBeenCalledWith(
+      "org-1",
+      "member@bison.howard.edu",
+      "House Turing",
+      undefined,
+      "member@bison.howard.edu",
+    );
+  });
+
+  it("surfaces the repo's rejection when the roster role does require a screenshot", async () => {
+    setHouseAssignmentMock.mockRejectedValue(
+      new AppError("VALIDATION_FAILED", "Upload your House test result."),
+    );
+
+    const result = await setHouseAction("House Turing");
+
+    expect(result.error).toBe("Upload your House test result.");
   });
 });
 

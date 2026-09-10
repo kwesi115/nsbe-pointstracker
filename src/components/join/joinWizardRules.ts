@@ -5,6 +5,7 @@
  * environment with no DOM, so JoinWizard.tsx itself isn't render-tested.
  */
 
+import { houseSelfVerifies } from "@/lib/core-form";
 import type { Role } from "@/lib/types";
 
 export type StepKey = "type" | "code" | "account" | "about" | "contact" | "membership" | "house" | "resume";
@@ -40,6 +41,8 @@ export function stepsFor(accountType: AccountType, resolvedRole: Role | null): S
   return [...base, "about", "contact", "membership", "house", "resume"];
 }
 
+const SELECT_OR_SKIP = `Select your House, or choose "I haven't taken the test yet."`;
+
 export interface HouseAnswer {
   houseSkipped: boolean;
   house: string;
@@ -49,13 +52,19 @@ export interface HouseAnswer {
 /**
  * Gate for the House step's Continue button — no Yes/No question anymore
  * (Part 1 restructure). Skipping ("I haven't taken the test yet") is a
- * complete, valid answer on its own; otherwise a House and its screenshot
- * are required TOGETHER — one without the other is unusable. Mirrors
- * setHouseAction's server-side check in join/actions.ts — this is a UX
- * affordance, not the rule itself; the server re-validates independently.
+ * complete, valid answer on its own, for every role. Otherwise a House and
+ * its screenshot are required TOGETHER — one without the other is unusable
+ * — except for a role that self-verifies (see lib/core-form.ts
+ * houseSelfVerifies), where the House alone IS the complete answer and there
+ * is no upload control rendered to satisfy. Mirrors setHouseAssignment's
+ * server-side check — this is a UX affordance, not the rule itself; the
+ * server re-validates independently off the roster role.
  */
-export function validateHouseStep(answer: HouseAnswer): string | null {
+export function validateHouseStep(answer: HouseAnswer, role: Role): string | null {
   if (answer.houseSkipped) return null;
+  if (houseSelfVerifies(role)) {
+    return answer.house ? null : SELECT_OR_SKIP;
+  }
   if (!answer.house && !answer.houseProofFileId) {
     return 'Select your House and upload your screenshot, or choose "I haven\'t taken the test yet."';
   }

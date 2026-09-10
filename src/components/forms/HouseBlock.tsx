@@ -5,8 +5,9 @@ import FileDropField from "@/components/forms/FileDropField";
 import Button from "@/components/ui/Button";
 import Field, { selectClass } from "@/components/ui/Field";
 import HouseDot from "@/components/ui/HouseDot";
-import { coreField } from "@/lib/core-form";
+import { coreField, houseSelfVerifies } from "@/lib/core-form";
 import type { House } from "@/lib/houses";
+import type { Role } from "@/lib/types";
 
 export interface HouseBlockValue {
   house?: string;
@@ -24,10 +25,19 @@ export interface HouseBlockValue {
  * Selecting a House requires the screenshot and vice versa — the client-side
  * half of that rule; lib/core-form.ts buildCoreFormSchema and
  * lib/repo.ts setHouseAssignment enforce it server-side independently.
+ *
+ * `role` decides whether there is an upload at all, via the shared
+ * houseSelfVerifies rule. Because all three placements render THIS
+ * component, that is the only place the House role check is made on the
+ * client — the call sites pass a role, they don't branch on one. An E-Board
+ * member gets the dropdown and the skip control and no upload control:
+ * their House is verified the moment they pick it, so an optional upload
+ * would be clutter nobody would ever use.
  */
 export default function HouseBlock({
   houses,
   houseTestUrl,
+  role,
   value,
   onChange,
   errors,
@@ -35,11 +45,14 @@ export default function HouseBlock({
 }: {
   houses: House[];
   houseTestUrl: string;
+  role: Role;
   value: HouseBlockValue;
   onChange: (patch: HouseBlockValue) => void;
   errors?: { house?: string; houseProofFileId?: string };
   disabled?: boolean;
 }) {
+  const selfVerifies = houseSelfVerifies(role);
+
   return (
     <div className="flex flex-col gap-4">
       <Button href={houseTestUrl} target="_blank" rel="noopener noreferrer" className="self-start">
@@ -61,7 +74,11 @@ export default function HouseBlock({
         </div>
       ) : (
         <>
-          <p className="text-sm text-muted">Already taken it? Upload a screenshot of your result below.</p>
+          <p className="text-sm text-muted">
+            {selfVerifies
+              ? "Already taken it? Select your result below — no screenshot needed."
+              : "Already taken it? Upload a screenshot of your result below."}
+          </p>
 
           <Field label={coreField("house").label} required error={errors?.house}>
             {(id) => (
@@ -87,17 +104,21 @@ export default function HouseBlock({
             )}
           </Field>
 
-          <FileDropField
-            label={coreField("houseProofFileId").label}
-            kind="house_proof"
-            accept="image/png,image/jpeg,image/webp"
-            required
-            error={errors?.houseProofFileId}
-            filename={value.houseFilename ?? null}
-            onUploaded={(fileId, filename) => onChange({ houseProofFileId: fileId, houseFilename: filename })}
-            onClear={() => onChange({ houseProofFileId: undefined, houseFilename: undefined })}
-            disabled={disabled}
-          />
+          {!selfVerifies ? (
+            <FileDropField
+              label={coreField("houseProofFileId").label}
+              kind="house_proof"
+              accept="image/png,image/jpeg,image/webp"
+              required
+              error={errors?.houseProofFileId}
+              filename={value.houseFilename ?? null}
+              onUploaded={(fileId, filename) => onChange({ houseProofFileId: fileId, houseFilename: filename })}
+              onClear={() => onChange({ houseProofFileId: undefined, houseFilename: undefined })}
+              disabled={disabled}
+            />
+          ) : (
+            <p className="text-xs text-muted">Your House is confirmed as soon as you save — no review needed.</p>
+          )}
 
           <button
             type="button"
