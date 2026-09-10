@@ -1,17 +1,24 @@
 "use client";
 
 import { ExternalLink } from "lucide-react";
-import { useTransition } from "react";
-import { reportDuesAction, reportNationalAction } from "@/app/(member)/account/actions";
+import { useState, useTransition } from "react";
+import { reportDuesAction, reportNationalAction, updateProfileAction } from "@/app/(member)/account/actions";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Field, { inputClass } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
+import { coreField } from "@/lib/core-form";
 import type { Member } from "@/lib/types";
 
 type MembershipMember = Pick<
   Member,
-  "duesPaidReported" | "duesVerifiedAt" | "nationalMemberReported" | "nationalVerifiedAt" | "membershipSeason"
+  | "duesPaidReported"
+  | "duesVerifiedAt"
+  | "nationalMemberReported"
+  | "nationalVerifiedAt"
+  | "membershipSeason"
+  | "nsbeMembershipId"
 >;
 
 /**
@@ -33,7 +40,21 @@ export default function MembershipSection({
   nationalMembershipUrl: string;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [nsbeMembershipId, setNsbeMembershipId] = useState(member.nsbeMembershipId);
   const { show } = useToast();
+
+  // Editable whatever the national membership status is — including "Not
+  // reported" — and never cleared by it. Blank is a valid saved value: it's
+  // how a member removes an ID they entered by mistake.
+  const nsbeIdDirty = nsbeMembershipId.trim() !== member.nsbeMembershipId.trim();
+
+  function saveNsbeId() {
+    startTransition(async () => {
+      const result = await updateProfileAction({ nsbeMembershipId: nsbeMembershipId.trim() });
+      if (result.error) show(result.error, "error");
+      else show("NSBE Membership ID saved");
+    });
+  }
 
   const seasonMatches = member.membershipSeason === season;
   const duesConfirmed = member.duesPaidReported === true && seasonMatches;
@@ -117,6 +138,26 @@ export default function MembershipSection({
                 </Button>
               </div>
             ) : null}
+          </div>
+
+          <div className="border-t border-line pt-4">
+            <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText}>
+              {(id, describedBy) => (
+                <div className="flex flex-wrap items-start gap-3">
+                  <input
+                    id={id}
+                    value={nsbeMembershipId}
+                    onChange={(e) => setNsbeMembershipId(e.target.value)}
+                    disabled={isPending}
+                    aria-describedby={describedBy}
+                    className={`${inputClass} flex-1 sm:max-w-xs`}
+                  />
+                  <Button type="button" onClick={saveNsbeId} disabled={isPending || !nsbeIdDirty}>
+                    Save
+                  </Button>
+                </div>
+              )}
+            </Field>
           </div>
         </div>
       </Card>

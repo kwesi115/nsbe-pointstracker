@@ -219,7 +219,18 @@ export default function JoinWizard({ config }: { config: JoinWizardConfig }) {
             // step 2 previewed (e.g. a code that got exhausted in between)
             // or from what a codeless "general" pick assumed.
             patch({ email, accountCreated: true, resolvedRole: grantsRole });
-            goNext();
+            // An ADMIN signup ends here — the account step is its last one
+            // (see stepsFor), so finish rather than advancing into a step
+            // that doesn't exist. Everything below is computed against the
+            // step list the CONFIRMED role produces, not `steps`, which is
+            // still the pre-patch list on this render: goNext() would clamp
+            // against the old length and could land back on this same step
+            // when the list grows (a code that previewed ADMIN but granted
+            // GENERAL), re-showing a form whose account already exists.
+            const next = stepsFor(draft.accountType, grantsRole);
+            const accountIndex = next.indexOf("account");
+            if (accountIndex === next.length - 1) finish();
+            else setStepIndex(accountIndex + 1);
           }}
         />
       )}
@@ -757,7 +768,7 @@ function MembershipStep({
               id={id}
               label="National member"
               value={draft.nationalMember}
-              onChange={(v) => onPatch({ nationalMember: v, nsbeMembershipId: v ? draft.nsbeMembershipId : "" })}
+              onChange={(v) => onPatch({ nationalMember: v })}
               describedBy={describedBy}
             />
             <Description
@@ -767,18 +778,23 @@ function MembershipStep({
           </div>
         )}
       </Field>
-      {draft.nationalMember ? (
-        <Field label="NSBE membership ID">
-          {(id) => (
-            <input
-              id={id}
-              value={draft.nsbeMembershipId}
-              onChange={(e) => onPatch({ nsbeMembershipId: e.target.value })}
-              className={inputClass}
-            />
-          )}
-        </Field>
-      ) : null}
+      {/*
+        Its own field below the national question, not indented under it and
+        not conditional on the answer — a member can hold an ID from a prior
+        year, or have one pending, while answering No. Optional: the step's
+        Continue gate (see submit above) never looks at it.
+      */}
+      <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText}>
+        {(id, describedBy) => (
+          <input
+            id={id}
+            value={draft.nsbeMembershipId}
+            onChange={(e) => onPatch({ nsbeMembershipId: e.target.value })}
+            aria-describedby={describedBy}
+            className={inputClass}
+          />
+        )}
+      </Field>
       {error ? <StepError message={error} sessionExpired={sessionExpired} /> : null}
       <Button type="button" onClick={submit} disabled={pending || sessionExpired}>
         {pending ? "Saving…" : "Continue"}

@@ -14,7 +14,7 @@
 import { z } from "zod";
 import { AppError } from "./errors";
 import type { House } from "./houses";
-import type { Audience, Classification, Member } from "./types";
+import type { Audience, Classification, Member, Role } from "./types";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -145,12 +145,16 @@ export const CORE_FORM_FIELDS: CoreFormField[] = [
     description: "Not a member yet? Join or renew at [NSBE.org]({{nationalMembershipUrl}}).",
   },
   {
+    // Independent of the national membership answer: always shown, always
+    // optional, never revealed by a Yes. A member can hold an ID from a
+    // prior year, or have one pending, while answering No this season.
     id: "nsbeMembershipId",
-    label: "NSBE membership ID",
+    label: "NSBE Membership ID",
     section: "membership",
     kind: "short_text",
     required: false,
     prefillFrom: "nsbeMembershipId",
+    helpText: "Optional. Leave blank if you don't have one yet.",
   },
   {
     id: "house",
@@ -201,8 +205,13 @@ export function coreField(id: string): CoreFormField {
 
 /**
  * Every field the check-in form (or /account's completeness panel) can ever
- * ask about. bisonEmail is deliberately NOT a member of this union — the
- * account already proves it, so it can never be "missing".
+ * ask about. Two fields are deliberately NOT members of this union:
+ * bisonEmail, because the account already proves it; and nsbeMembershipId,
+ * because it is optional. CheckInFlow gives a one-tap check-in exactly when
+ * getMissingFields comes back empty, so an optional field listed here would
+ * put a whole form in front of a member who has nothing left to answer. It
+ * is rendered on the check-in form, /join and /account regardless — it just
+ * never counts as "missing".
  */
 export type CoreFieldKey =
   | "firstName"
@@ -215,11 +224,17 @@ export type CoreFieldKey =
   | "majorOther"
   | "duesPaid"
   | "nationalMember"
-  | "nsbeMembershipId"
   | "house"
   | "resume";
 
 export interface GetMissingFieldsUser {
+  /**
+   * The CURRENT roster role. Only ADMIN changes anything here — see
+   * getMissingFields. An EBOARD member is prompted exactly like a GENERAL
+   * one, because an officer is a student with a House, a shirt size, dues
+   * and a national membership just like every other member.
+   */
+  role: Role;
   firstName: string;
   lastName: string;
   studentId: string;
@@ -234,7 +249,6 @@ export interface GetMissingFieldsUser {
   nationalMemberReported: boolean | null;
   /** The season dues/national were last confirmed for — see User.membershipSeason. */
   membershipSeason: string;
-  nsbeMembershipId: string;
   house: string;
   houseVerifiedAt: Date | null;
   resumeFileId: string | null;
@@ -251,9 +265,25 @@ export interface GetMissingFieldsConfig {
  * /account's completeness panel uses it to decide what to list. Two
  * implementations of "what's missing" would drift; this is the only one.
  *
- * EBOARD_ONLY events only ever ask for genuinely-missing name fields —
- * officers re-confirming dues/House/resume at every weekly meeting is how a
- * form gets abandoned.
+ * Two independent reductions stop after the name fields, and they must stay
+ * two separate checks — collapsing them would break one case each way:
+ *
+ *   WHO YOU ARE          ADMIN accounts are a staff login, not a member
+ *                        profile — they never signed up for one (see
+ *                        joinWizardRules.ts stepsFor) and are never nagged
+ *                        to complete one. EBOARD is NOT included: an
+ *                        officer is prompted exactly like a GENERAL member.
+ *
+ *   WHAT EVENT YOU'RE AT EBOARD_ONLY events only ever ask for
+ *                        genuinely-missing name fields — officers
+ *                        re-confirming dues/House/resume at every weekly
+ *                        meeting is how a form gets abandoned. This applies
+ *                        to whoever is in the room, whatever their role.
+ *
+ * Name is the floor for both, not zero, because firstName/lastName are the
+ * only fields buildCoreFormSchema requires unconditionally — anything this
+ * function stops asking for, that schema must also stop requiring, or a
+ * check-in fails on a question that was never rendered.
  */
 export function getMissingFields(
   user: GetMissingFieldsUser,
@@ -264,6 +294,8 @@ export function getMissingFields(
 
   if (!user.firstName) missing.push("firstName");
   if (!user.lastName) missing.push("lastName");
+
+  if (user.role === "admin") return missing;
 
   if (event.audience === "eboard_only") return missing;
 
@@ -278,7 +310,6 @@ export function getMissingFields(
 
   if (user.duesPaidReported !== true || user.membershipSeason !== config.SEASON) missing.push("duesPaid");
   if (user.nationalMemberReported !== true || user.membershipSeason !== config.SEASON) missing.push("nationalMember");
-  if (user.nationalMemberReported === true && !user.nsbeMembershipId) missing.push("nsbeMembershipId");
 
   if (user.houseVerifiedAt === null && !user.house) missing.push("house");
 
@@ -294,9 +325,10 @@ export function getMissingFields(
 export interface CoreFormAnswers {
   firstName: string;
   lastName: string;
-  studentId: string;
-  phone: string;
-  personalEmail: string;
+  /** Omitted entirely when the form didn't ask — an ADMIN is never asked for any of these; see getMissingFields. */
+  studentId?: string;
+  phone?: string;
+  personalEmail?: string;
   /** Omitted entirely once already current for this season — see profileStale in getMissingFields. */
   classification?: Classification;
   major?: string;
@@ -304,6 +336,7 @@ export interface CoreFormAnswers {
   /** Omitted entirely once already reported this season — see duesAlreadyReported below. */
   duesPaid?: boolean;
   nationalMember?: boolean;
+  /** Always offered, always optional, never gated on `nationalMember`. Absent means "not submitted"; "" means the member cleared it. */
   nsbeMembershipId?: string;
   house?: string;
   houseProofFileId?: string;
@@ -328,19 +361,27 @@ export function buildCoreFormSchema(ctx: CoreFormValidationContext) {
 
   return z
     .object({
+      // The only two fields required unconditionally — every core form, full
+      // or reduced, confirms identity, and getMissingFields never stops
+      // asking for a blank name whatever the role or audience.
       firstName: z.string().trim().min(1, "Required").max(200),
       lastName: z.string().trim().min(1, "Required").max(200),
-      studentId: z.string().trim().min(1, "Required").max(50),
-      // Same "always in the payload, never gap-filled away" shape as
-      // studentId above — Part 2 made both fields required everywhere, so
-      // there's no "already reported, skip re-asking" case to omit them for.
-      phone: z.string().trim().min(1, "Required").max(50),
+      // studentId/phone/personalEmail are still required of every member —
+      // but "required" means "required WHEN ASKED", exactly like
+      // classification/major below. An ADMIN never gave them (their signup
+      // stops after the account step) and is never asked for them, so a
+      // hard requirement here would fail their check-in on questions the
+      // form didn't render. A member who has them on file always submits
+      // them back, so this is a no-op for GENERAL and EBOARD.
+      studentId: z.string().trim().min(1, "Required").max(50).optional(),
+      phone: z.string().trim().min(1, "Required").max(50).optional(),
       personalEmail: z
         .string()
         .trim()
         .min(1, "Required")
         .max(200)
-        .refine((v) => EMAIL_PATTERN.test(v), "Enter a valid email"),
+        .refine((v) => EMAIL_PATTERN.test(v), "Enter a valid email")
+        .optional(),
       // classification/major/majorOther are only ever in the missing set when
       // stale or absent (see getMissingFields) — an already-current value is
       // never resubmitted, so these can't be unconditionally required.
@@ -358,6 +399,12 @@ export function buildCoreFormSchema(ctx: CoreFormValidationContext) {
     })
     .strict()
     .superRefine((data, ctxRefine) => {
+      for (const key of ["studentId", "phone", "personalEmail"] as const) {
+        if (missing.has(key) && data[key] === undefined) {
+          ctxRefine.addIssue({ code: "custom", path: [key], message: "Required" });
+        }
+      }
+
       if (missing.has("classification") && data.classification === undefined) {
         ctxRefine.addIssue({ code: "custom", path: ["classification"], message: "Select a classification" });
       }
@@ -409,12 +456,9 @@ export function validateCoreAnswers(ctx: CoreFormValidationContext, answers: unk
     throw new AppError("VALIDATION_FAILED", "Check the highlighted fields.", { fieldErrors });
   }
   const data = result.data as CoreFormAnswers;
-  // National = No hides and clears the membership ID — never persist a stale
-  // value. Only an EXPLICIT "No" clears it; when the question wasn't asked at
-  // all (nationalMember undefined, already reported this season) a
-  // nsbeMembershipId submitted on its own — the gap-filler case where only
-  // the ID was missing — must survive untouched.
-  if (data.nationalMember === false) data.nsbeMembershipId = undefined;
+  // nsbeMembershipId is NOT derived from the national membership answer —
+  // answering No leaves whatever the member typed exactly as they typed it.
+  // The only thing that clears it is the member clearing the field.
   // Same reasoning: major is only in the payload when it was asked. If it
   // wasn't (already current), a majorOther submitted on its own — the
   // gap-filler case where major="Other" already but majorOther was empty —

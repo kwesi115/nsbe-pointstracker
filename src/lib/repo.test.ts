@@ -513,6 +513,33 @@ describe("registerForEvent — self-reported eligibility (Part 1)", () => {
     expect(member).not.toBeNull();
   });
 
+  it("the NSBE Membership ID survives answering No — at check-in and from /account", async () => {
+    const user = await makeUser({ duesPaidReported: false, nationalMemberReported: false, membershipSeason: null });
+
+    // Reported No, with an ID from a prior year supplied alongside it.
+    await setNationalReported(orgId, user.email, false, user.email, "99999");
+    expect((await prisma.user.findUnique({ where: { id: user.id } }))?.nsbeMembershipId).toBe("99999");
+
+    // Answering No again at check-in doesn't wipe it either.
+    const event = await makeOpenEvent();
+    await registerForEvent({
+      orgId,
+      email: user.email,
+      eventId: event.id,
+      core: validCore({ nationalMember: false, nsbeMembershipId: "99999" }),
+      extra: {},
+    });
+    expect((await prisma.user.findUnique({ where: { id: user.id } }))?.nsbeMembershipId).toBe("99999");
+
+    // Reporting No from /account with no ID supplied leaves the stored one alone.
+    await setNationalReported(orgId, user.email, false, user.email);
+    expect((await prisma.user.findUnique({ where: { id: user.id } }))?.nsbeMembershipId).toBe("99999");
+
+    // Only clearing the field clears the value.
+    await setNationalReported(orgId, user.email, true, user.email, "");
+    expect((await prisma.user.findUnique({ where: { id: user.id } }))?.nsbeMembershipId).toBeNull();
+  });
+
   it("revoking a claim requires a note, drops the member from the leaderboard, and re-arms the question", async () => {
     const user = await makeUser();
     const event = await makeOpenEvent();

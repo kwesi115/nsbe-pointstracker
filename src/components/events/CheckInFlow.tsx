@@ -33,6 +33,7 @@ export default function CheckInFlow({
   extraFields: FormField[];
   member: Pick<
     Member,
+    | "role"
     | "firstName"
     | "lastName"
     | "studentId"

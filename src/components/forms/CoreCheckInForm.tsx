@@ -51,6 +51,7 @@ function Reveal({ show, children }: { show: boolean; children: ReactNode }) {
 
 type CoreCheckInMember = Pick<
   Member,
+  | "role"
   | "firstName"
   | "lastName"
   | "studentId"
@@ -60,7 +61,6 @@ type CoreCheckInMember = Pick<
   | "major"
   | "majorOther"
   | "profileSeason"
-  | "nsbeMembershipId"
   | "house"
   | "houseVerifiedAt"
   | "resumeFileId"
@@ -113,21 +113,27 @@ export default function CoreCheckInForm({
     nationalMembershipUrl: config.nationalMembershipUrl,
   };
 
+  // Two independent reasons the member-profile half of this form doesn't
+  // apply, kept as two named conditions because they answer different
+  // questions (see getMissingFields). An E-Board officer is `memberProfile`
+  // at every event, and `reduced` only at an EBOARD_ONLY one.
+  const memberProfile = member.role !== "admin"; // WHO YOU ARE
+  const showMemberFields = memberProfile && !reduced; // ...and WHAT EVENT YOU'RE AT
+
   const nameLive = isLive("firstName") || isLive("lastName");
-  const studentIdLive = !reduced && isLive("studentId");
-  const phoneLive = !reduced && isLive("phone");
-  const personalEmailLive = !reduced && isLive("personalEmail");
-  const classificationLive = !reduced && isLive("classification");
-  const majorLive = !reduced && isLive("major");
+  const studentIdLive = showMemberFields && isLive("studentId");
+  const phoneLive = showMemberFields && isLive("phone");
+  const personalEmailLive = showMemberFields && isLive("personalEmail");
+  const classificationLive = showMemberFields && isLive("classification");
+  const majorLive = showMemberFields && isLive("major");
   // isLive("majorOther") covers the server-known case (major already "Other"
   // on file with a blank majorOther); the second clause covers picking
   // "Other" fresh this session, which getMissingFields couldn't have known about.
-  const majorOtherLive = !reduced && (isLive("majorOther") || (majorLive && value.major === OTHER_MAJOR));
-  const duesLive = !reduced && isLive("duesPaid");
-  const nationalLive = !reduced && isLive("nationalMember");
-  const nsbeIdOnlyLive = !reduced && !nationalLive && isLive("nsbeMembershipId");
-  const houseLive = !reduced && isLive("house");
-  const resumeLive = !reduced && isLive("resume");
+  const majorOtherLive = showMemberFields && (isLive("majorOther") || (majorLive && value.major === OTHER_MAJOR));
+  const duesLive = showMemberFields && isLive("duesPaid");
+  const nationalLive = showMemberFields && isLive("nationalMember");
+  const houseLive = showMemberFields && isLive("house");
+  const resumeLive = showMemberFields && isLive("resume");
 
   // The one place preselection is correct (Part: seasonal refresh) — the
   // member is confirming a known value, not answering fresh. Only shown when
@@ -156,29 +162,29 @@ export default function CoreCheckInForm({
             <Lock size={14} aria-hidden="true" />
             <span>Bison email: {email}</span>
           </div>
-          {!reduced && !studentIdLive ? (
+          {showMemberFields && !studentIdLive ? (
             <ConfirmationRow label="Student ID" value={member.studentId} onEdit={() => edit("studentId")} />
           ) : null}
-          {!reduced && !phoneLive ? (
+          {showMemberFields && !phoneLive ? (
             <ConfirmationRow label="Phone" value={member.phone} onEdit={() => edit("phone")} />
           ) : null}
-          {!reduced && !personalEmailLive ? (
+          {showMemberFields && !personalEmailLive ? (
             <ConfirmationRow label="Personal email" value={member.personalEmail} onEdit={() => edit("personalEmail")} />
           ) : null}
-          {!reduced && !classificationLive ? (
+          {showMemberFields && !classificationLive ? (
             <ConfirmationRow
               label="Classification"
               value={classificationLabel ?? member.classification}
               onEdit={() => edit("classification")}
             />
           ) : null}
-          {!reduced && !majorLive ? (
+          {showMemberFields && !majorLive ? (
             <ConfirmationRow label="Major" value={majorDisplay || "—"} onEdit={() => edit("major")} />
           ) : null}
-          {!reduced && membershipConfirmed ? (
+          {showMemberFields && membershipConfirmed ? (
             <ConfirmationRow label="Membership" value="Dues paid · National member" onEdit={() => edit("duesPaid", "nationalMember")} />
           ) : null}
-          {!reduced && !houseLive ? (
+          {showMemberFields && !houseLive ? (
             <ConfirmationRow
               label="House"
               value={
@@ -195,7 +201,7 @@ export default function CoreCheckInForm({
               onEdit={() => edit("house")}
             />
           ) : null}
-          {!reduced && !resumeLive ? <ConfirmationRow label="Resume" value="On file" onEdit={() => edit("resume")} /> : null}
+          {showMemberFields && !resumeLive ? <ConfirmationRow label="Resume" value="On file" onEdit={() => edit("resume")} /> : null}
         </div>
       </section>
 
@@ -350,7 +356,7 @@ export default function CoreCheckInForm({
         </section>
       ) : null}
 
-      {duesLive || nationalLive || nsbeIdOnlyLive ? (
+      {showMemberFields ? (
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Membership</h2>
 
@@ -381,7 +387,7 @@ export default function CoreCheckInForm({
                       id={id}
                       label={coreField("nationalMember").label}
                       value={value.nationalMember}
-                      onChange={(v) => onChange({ nationalMember: v, nsbeMembershipId: v ? value.nsbeMembershipId : undefined })}
+                      onChange={(v) => onChange({ nationalMember: v })}
                       error={errors.nationalMember}
                       describedBy={describedBy}
                     />
@@ -389,36 +395,27 @@ export default function CoreCheckInForm({
                   </div>
                 )}
               </Field>
-
-              <Reveal show={value.nationalMember === true}>
-                <Field label={coreField("nsbeMembershipId").label}>
-                  {(id) => (
-                    <input
-                      id={id}
-                      value={value.nsbeMembershipId ?? ""}
-                      onChange={(e) => onChange({ nsbeMembershipId: e.target.value })}
-                      disabled={disabled}
-                      className={inputClass}
-                    />
-                  )}
-                </Field>
-              </Reveal>
             </>
           ) : null}
 
-          {nsbeIdOnlyLive ? (
-            <Field label={coreField("nsbeMembershipId").label}>
-              {(id) => (
-                <input
-                  id={id}
-                  value={value.nsbeMembershipId ?? ""}
-                  onChange={(e) => onChange({ nsbeMembershipId: e.target.value })}
-                  disabled={disabled}
-                  className={inputClass}
-                />
-              )}
-            </Field>
-          ) : null}
+          {/*
+            Always rendered, never revealed: no Reveal, no dependence on
+            value.nationalMember, and it sits beside the national question
+            rather than under it. Optional, so it never enters the missing
+            set (see getMissingFields) and never blocks a check-in.
+          */}
+          <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText}>
+            {(id, describedBy) => (
+              <input
+                id={id}
+                value={value.nsbeMembershipId ?? ""}
+                onChange={(e) => onChange({ nsbeMembershipId: e.target.value })}
+                disabled={disabled}
+                aria-describedby={describedBy}
+                className={inputClass}
+              />
+            )}
+          </Field>
         </section>
       ) : null}
 

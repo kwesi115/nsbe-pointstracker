@@ -36,13 +36,16 @@ describe("validateHouseStep — no Yes/No question; House+screenshot together, o
   });
 });
 
-describe("stepsFor — General needs no code step; EBOARD/ADMIN still skip Membership/House/Resume", () => {
+describe("stepsFor — General needs no code step; only ADMIN skips any profile step", () => {
+  const GENERAL_STEPS = stepsFor("general", "general");
+  const EBOARD_STEPS = stepsFor("eboard", "eboard");
+  const ADMIN_STEPS = stepsFor("admin", "admin");
+
   it("picking General drops the code step entirely — straight from the picker to the account step", () => {
-    const steps = stepsFor("general", "general");
-    expect(steps).not.toContain("code");
-    expect(steps).toContain("house");
-    expect(steps).toContain("resume");
-    expect(steps.indexOf("house")).toBeLessThan(steps.indexOf("resume"));
+    expect(GENERAL_STEPS).not.toContain("code");
+    expect(GENERAL_STEPS).toContain("house");
+    expect(GENERAL_STEPS).toContain("resume");
+    expect(GENERAL_STEPS.indexOf("house")).toBeLessThan(GENERAL_STEPS.indexOf("resume"));
   });
 
   it("before any pick is made, the code step is still present (the default, not-yet-general state)", () => {
@@ -55,32 +58,40 @@ describe("stepsFor — General needs no code step; EBOARD/ADMIN still skip Membe
     expect(stepsFor("admin", null)).toContain("code");
   });
 
-  it("EBOARD signup (once the code resolves) skips Membership, House, and Resume", () => {
-    const steps = stepsFor("eboard", "eboard");
-    expect(steps).toContain("code");
-    expect(steps).not.toContain("membership");
-    expect(steps).not.toContain("house");
-    expect(steps).not.toContain("resume");
+  it("an EBOARD signup renders every step a GENERAL signup renders — the join code step is the ONLY difference", () => {
+    expect(EBOARD_STEPS).toEqual(["type", "code", ...GENERAL_STEPS.slice(1)]);
+    expect(EBOARD_STEPS).toContain("code");
+    expect(GENERAL_STEPS).not.toContain("code");
   });
 
-  it("ADMIN signup (once the code resolves) skips Membership, House, and Resume", () => {
-    const steps = stepsFor("admin", "admin");
-    expect(steps).toContain("code");
-    expect(steps).not.toContain("membership");
-    expect(steps).not.toContain("house");
-    expect(steps).not.toContain("resume");
+  it("an EBOARD signup cannot skip About you, Contact, Membership, House, or Resume", () => {
+    for (const step of ["about", "contact", "membership", "house", "resume"] as const) {
+      expect(EBOARD_STEPS).toContain(step);
+    }
+  });
+
+  it("the House step is mandatory for EBOARD — validateHouseStep still gates it, skip still valid", () => {
+    expect(EBOARD_STEPS).toContain("house");
+    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined })).toBeTruthy();
+    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined })).toBeNull();
+  });
+
+  it("an ADMIN signup skips about-you, contact, membership, House, and resume", () => {
+    expect(ADMIN_STEPS).toEqual(["type", "code", "account"]);
+    for (const step of ["about", "contact", "membership", "house", "resume"] as const) {
+      expect(ADMIN_STEPS).not.toContain(step);
+    }
   });
 
   it("a downgrade — picked EBOARD/ADMIN but the code only granted GENERAL — falls through to the full General step list", () => {
-    const steps = stepsFor("eboard", "general");
-    expect(steps).toContain("code");
-    expect(steps).toContain("membership");
-    expect(steps).toContain("house");
-    expect(steps).toContain("resume");
+    for (const picked of ["eboard", "admin"] as const) {
+      const steps = stepsFor(picked, "general");
+      expect(steps).toEqual(["type", "code", ...GENERAL_STEPS.slice(1)]);
+    }
   });
 
   it("Resume is always the last step when present, and has no equivalent gate — it stays skippable via 'Do this later'", () => {
-    const steps = stepsFor("general", "general");
-    expect(steps[steps.length - 1]).toBe("resume");
+    expect(GENERAL_STEPS[GENERAL_STEPS.length - 1]).toBe("resume");
+    expect(EBOARD_STEPS[EBOARD_STEPS.length - 1]).toBe("resume");
   });
 });

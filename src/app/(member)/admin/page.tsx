@@ -2,18 +2,13 @@ import { ShieldAlert } from "lucide-react";
 import AdminNav from "@/components/admin/AdminNav";
 import EventsBoard from "@/components/admin/EventsBoard";
 import Button from "@/components/ui/Button";
-import { formatDateTime } from "@/lib/format";
 import { getEventCodeAlertState } from "@/lib/rate-limit";
-import { getEventsWithStats, getRecentPrivilegedJoinCodeGrants } from "@/lib/repo";
+import { getEventsWithStats } from "@/lib/repo";
 import { requireEboard } from "@/lib/session";
 
 export default async function AdminEventsPage() {
   const session = await requireEboard();
-  const isAdmin = session.user.role === "admin";
-  const [events, privilegedGrants] = await Promise.all([
-    getEventsWithStats(session.user.orgId),
-    isAdmin ? getRecentPrivilegedJoinCodeGrants(session.user.orgId) : Promise.resolve([]),
-  ]);
+  const events = await getEventsWithStats(session.user.orgId);
   const eventsWithAlerts = events.map((e) => ({ ...e, codeAlert: getEventCodeAlertState(e.eventId) }));
   const suspiciousEvents = eventsWithAlerts.filter((e) => e.codeAlert.suspicious);
 
@@ -24,21 +19,6 @@ export default async function AdminEventsPage() {
         <Button href="/admin/events/new">New event</Button>
       </div>
       <AdminNav active="/admin" />
-
-      {privilegedGrants.length > 0 ? (
-        <div className="flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-ink">
-          <p className="flex items-center gap-2 font-semibold">
-            <ShieldAlert size={16} aria-hidden="true" /> New admin/E-Board accounts via join code
-          </p>
-          <ul className="flex flex-col gap-1">
-            {privilegedGrants.map((entry, i) => (
-              <li key={i} className="text-xs text-muted">
-                {entry.actor} · {entry.detail} · {formatDateTime(entry.timestamp)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
 
       {suspiciousEvents.length > 0 ? (
         <div className="flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-ink">

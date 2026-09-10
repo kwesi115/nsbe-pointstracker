@@ -56,14 +56,28 @@ vi.mock("@/lib/rate-limit", () => ({
 import { AuthError } from "next-auth";
 import { signIn } from "@/auth";
 import { AppError } from "@/lib/errors";
-import { getConfigValue, getCoreFormConfig, matchJoinCode, redeemJoinCodeForSignup, setHouseAssignment } from "@/lib/repo";
+import {
+  getConfigValue,
+  getCoreFormConfig,
+  matchJoinCode,
+  redeemJoinCodeForSignup,
+  setHouseAssignment,
+  setNationalReported,
+} from "@/lib/repo";
 import { assertNotSignupRateLimited, recordSignupAttempt } from "@/lib/rate-limit";
 import { requireSession } from "@/lib/session";
-import { createAccountAction, setHouseAction, updateContactAction, type CreateAccountState } from "./actions";
+import {
+  createAccountAction,
+  setHouseAction,
+  updateContactAction,
+  updateMembershipAction,
+  type CreateAccountState,
+} from "./actions";
 
 const signInMock = signIn as unknown as ReturnType<typeof vi.fn>;
 const requireSessionMock = requireSession as unknown as ReturnType<typeof vi.fn>;
 const setHouseAssignmentMock = setHouseAssignment as unknown as ReturnType<typeof vi.fn>;
+const setNationalReportedMock = setNationalReported as unknown as ReturnType<typeof vi.fn>;
 const getConfigValueMock = getConfigValue as unknown as ReturnType<typeof vi.fn>;
 const getCoreFormConfigMock = getCoreFormConfig as unknown as ReturnType<typeof vi.fn>;
 const matchJoinCodeMock = matchJoinCode as unknown as ReturnType<typeof vi.fn>;
@@ -93,6 +107,7 @@ beforeEach(() => {
   signInMock.mockReset().mockResolvedValue(undefined);
   requireSessionMock.mockReset();
   setHouseAssignmentMock.mockReset().mockResolvedValue(undefined);
+  setNationalReportedMock.mockReset().mockResolvedValue(undefined);
   getConfigValueMock.mockReset().mockResolvedValue("");
   getCoreFormConfigMock.mockReset().mockResolvedValue({
     majors: [],
@@ -305,5 +320,93 @@ describe("setHouseAction — no Yes/No question; an explicit skip (both args omi
 
     expect(result.sessionExpired).toBe(true);
     expect(setHouseAssignmentMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * An E-Board signup is a member signup. Every server-side gate a GENERAL
+ * signup has to clear, an EBOARD signup has to clear identically — the join
+ * code step that resolved the role is the only difference between them (see
+ * joinWizardRules.ts stepsFor).
+ */
+describe("an EBOARD signup can't complete with an incomplete member profile", () => {
+  beforeEach(() => {
+    matchJoinCodeMock.mockResolvedValue({ grantsRole: "eboard", label: "E-Board" });
+    redeemJoinCodeForSignupMock.mockResolvedValue({
+      member: {},
+      grantsRole: "eboard",
+      label: "E-Board",
+      convertedFromGuest: false,
+    });
+  });
+
+  it("classification and major are required on the account step, exactly as for a GENERAL signup", async () => {
+    for (const field of ["classification", "major"]) {
+      const formData = accountFormData();
+      formData.set(field, "");
+
+      const result = await createAccountAction(CREATE_ACCOUNT_INITIAL, formData);
+
+      expect(result.ok).toBe(false);
+      expect(result.fieldErrors).toMatchObject({ [field]: expect.any(String) });
+      expect(redeemJoinCodeForSignupMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("phone and personal email are required on the contact step — the step EBOARD used to reach but no longer skips past", async () => {
+    requireSessionMock.mockResolvedValue(SESSION);
+
+    expect((await updateContactAction({ phone: "", personalEmail: "ada@example.com" })).error).toBeTruthy();
+    expect((await updateContactAction({ phone: "555-0100", personalEmail: "" })).error).toBeTruthy();
+  });
+
+  it("t-shirt size stays optional — 'identical to GENERAL' cuts both ways, and it is optional for GENERAL", async () => {
+    requireSessionMock.mockResolvedValue(SESSION);
+
+    const result = await updateContactAction({ phone: "555-0100", personalEmail: "ada@example.com" });
+
+    expect(result.error).toBeNull();
+  });
+
+  it("an EBOARD code still produces an EBOARD account once the profile fields are all present", async () => {
+    const result = await createAccountAction(CREATE_ACCOUNT_INITIAL, accountFormData());
+
+    expect(result.ok).toBe(true);
+    expect(result.grantsRole).toBe("eboard");
+  });
+});
+
+/**
+ * The NSBE Membership ID is its own optional field — not revealed by, gated
+ * on, or cleared by the national membership answer. A member can hold an ID
+ * from a prior year, or have one pending, while answering No this season.
+ */
+describe("updateMembershipAction — the NSBE Membership ID is independent of the national answer", () => {
+  beforeEach(() => {
+    requireSessionMock.mockResolvedValue(SESSION);
+  });
+
+  it("passes the ID through on Yes AND on No — answering No never clears it", async () => {
+    for (const nationalMember of [true, false]) {
+      setNationalReportedMock.mockClear();
+
+      const result = await updateMembershipAction({ duesPaid: true, nationalMember, nsbeMembershipId: "99999" });
+
+      expect(result.error).toBeNull();
+      expect(setNationalReportedMock).toHaveBeenCalledWith(
+        "org-1",
+        "member@bison.howard.edu",
+        nationalMember,
+        "member@bison.howard.edu",
+        "99999",
+      );
+    }
+  });
+
+  it("signup completes with the ID blank, on either national answer — it never blocks the step", async () => {
+    for (const nationalMember of [true, false]) {
+      expect((await updateMembershipAction({ duesPaid: true, nationalMember })).error).toBeNull();
+      expect((await updateMembershipAction({ duesPaid: false, nationalMember, nsbeMembershipId: "" })).error).toBeNull();
+    }
   });
 });

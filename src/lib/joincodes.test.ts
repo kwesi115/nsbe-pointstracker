@@ -12,6 +12,7 @@ import { currentCode } from "./code";
 import { AppError } from "./errors";
 import { hashPassword, verifyPassword } from "./passwords";
 import { prisma } from "./prisma";
+import * as repo from "./repo";
 import {
   getAuthRecord,
   matchJoinCode,
@@ -102,6 +103,32 @@ describe("join code redemption — role escalation fix (Part 3)", () => {
 
     expect(result.grantsRole).toBe("general");
     expect(result.member.role).toBe("general");
+  });
+
+  it("an EBOARD code writes the AdminLog audit row — the record stays even though the /admin banner that read it is gone", async () => {
+    const org = await makeOrg();
+    const { row, plaintext } = await makeJoinCode(org.id, { grantsRole: DbRole.EBOARD });
+    const email = `officer-${randomUUID()}@bison.howard.edu`;
+
+    const result = await redeemJoinCodeForSignup({
+      orgId: org.id,
+      submittedCode: plaintext,
+      email,
+      passwordHash: await hashPassword("Sufficiently-Long-Password-1"),
+      firstName: "Test",
+      lastName: "Officer",
+    });
+    expect(result.grantsRole).toBe("eboard");
+
+    const logs = await prisma.adminLog.findMany({ where: { orgId: org.id, action: "join_code_signup" } });
+    expect(logs).toHaveLength(1);
+    // The code used, the account it created, and the role it granted.
+    expect(logs[0].detail).toBe(`${row.label} -> eboard`);
+    expect(logs[0].target).toBe(result.member.id);
+
+    // Nothing reads these back for a notification any more — the banner and
+    // its query are removed, and only the audit trail remains.
+    expect("getRecentPrivilegedJoinCodeGrants" in repo).toBe(false);
   });
 
   it("an ADMIN code actually grants admin — the same function, a different code", async () => {

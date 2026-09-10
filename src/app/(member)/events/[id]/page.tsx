@@ -69,6 +69,9 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
             reduced={event.audience === "eboard_only"}
             member={
               member ?? {
+                // No roster row at all — the most restrictive fallback is
+                // a plain member, so nothing is skipped on their behalf.
+                role: "general",
                 firstName: "",
                 lastName: "",
                 studentId: "",

@@ -5,6 +5,7 @@ import type { Member } from "@/lib/types";
 
 type PanelMember = Pick<
   Member,
+  | "role"
   | "firstName"
   | "lastName"
   | "studentId"
@@ -17,7 +18,6 @@ type PanelMember = Pick<
   | "duesPaidReported"
   | "nationalMemberReported"
   | "membershipSeason"
-  | "nsbeMembershipId"
   | "house"
   | "houseVerifiedAt"
   | "resumeFileId"
@@ -35,7 +35,6 @@ const FIELD_LOCATION: Partial<Record<CoreFieldKey, { anchor: string; label: stri
   majorOther: { anchor: "#profile", label: "Major" },
   duesPaid: { anchor: "#membership", label: "Chapter dues" },
   nationalMember: { anchor: "#membership", label: "National NSBE membership" },
-  nsbeMembershipId: { anchor: "#membership", label: "NSBE membership ID" },
   house: { anchor: "#house", label: "NSBE House" },
   resume: { anchor: "#resume", label: "Resume" },
 };

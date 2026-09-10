@@ -20,6 +20,7 @@ const TEST_HOUSES: House[] = [
 ];
 
 const COMPLETE_USER: GetMissingFieldsUser = {
+  role: "general",
   firstName: "Ada",
   lastName: "Lovelace",
   studentId: "1000001",
@@ -32,7 +33,6 @@ const COMPLETE_USER: GetMissingFieldsUser = {
   duesPaidReported: true,
   nationalMemberReported: true,
   membershipSeason: SEASON,
-  nsbeMembershipId: "12345",
   house: "House Turing",
   houseVerifiedAt: new Date("2026-01-01"),
   resumeFileId: "file_1",
@@ -78,6 +78,7 @@ describe("getMissingFields", () => {
 
   it("a brand-new profile is missing name, studentId, phone, personalEmail, classification, major, dues, national, house, and resume", () => {
     const fresh: GetMissingFieldsUser = {
+      role: "general",
       firstName: "",
       lastName: "",
       studentId: "",
@@ -90,7 +91,6 @@ describe("getMissingFields", () => {
       duesPaidReported: null,
       nationalMemberReported: null,
       membershipSeason: "",
-      nsbeMembershipId: "",
       house: "",
       houseVerifiedAt: null,
       resumeFileId: null,
@@ -111,7 +111,8 @@ describe("getMissingFields", () => {
         "resume",
       ]),
     );
-    // majorOther is never missing when major isn't "Other"; bisonEmail is never a member of the union at all.
+    // majorOther is never missing when major isn't "Other"; bisonEmail and
+    // nsbeMembershipId are never members of the union at all.
     expect(missing).not.toContain("majorOther");
     expect(missing).not.toContain("nsbeMembershipId");
   });
@@ -158,9 +159,21 @@ describe("getMissingFields", () => {
     expect(missing).not.toContain("classification");
   });
 
-  it("national member with a blank NSBE ID is asked for the ID alone — an optional field that never blocks", () => {
-    const noId: GetMissingFieldsUser = { ...COMPLETE_USER, nsbeMembershipId: "" };
-    expect(getMissingFields(noId, ALL_EVENT, { SEASON })).toEqual(["nsbeMembershipId"]);
+  it("a blank NSBE ID is never missing — an optional field must not put a form in front of a complete member", () => {
+    // The one-tap check-in is exactly "getMissingFields came back empty"
+    // (see CheckInFlow's skipForm), so an optional field can never be in
+    // here. It is rendered on the check-in form, /join and /account
+    // regardless — it just isn't a gap to fill.
+    const nationalWithNoId: GetMissingFieldsUser = { ...COMPLETE_USER, nationalMemberReported: true };
+    expect(getMissingFields(nationalWithNoId, ALL_EVENT, { SEASON })).toEqual([]);
+
+    const notNationalWithNoId: GetMissingFieldsUser = {
+      ...COMPLETE_USER,
+      nationalMemberReported: false,
+      membershipSeason: SEASON,
+    };
+    // Only the national question itself comes back — never the ID.
+    expect(getMissingFields(notNationalWithNoId, ALL_EVENT, { SEASON })).toEqual(["nationalMember"]);
   });
 
   it("a member who skipped the House step at signup is asked again at check-in, and never again once house is set — even before admin verification", () => {
@@ -187,6 +200,71 @@ describe("getMissingFields", () => {
 
     const freshOfficer: GetMissingFieldsUser = { ...COMPLETE_USER, firstName: "", classification: "", house: "" };
     expect(getMissingFields(freshOfficer, EBOARD_EVENT, { SEASON })).toEqual(["firstName"]);
+  });
+
+  it("an EBOARD member is prompted exactly like a GENERAL one on an ALL-audience event", () => {
+    const gaps = { house: "", houseVerifiedAt: null, resumeFileId: null, duesPaidReported: null, membershipSeason: "" };
+    const general: GetMissingFieldsUser = { ...COMPLETE_USER, ...gaps, role: "general" };
+    const officer: GetMissingFieldsUser = { ...COMPLETE_USER, ...gaps, role: "eboard" };
+    expect(getMissingFields(officer, ALL_EVENT, { SEASON })).toEqual(getMissingFields(general, ALL_EVENT, { SEASON }));
+  });
+
+  it("an EBOARD member with a missing House is prompted at their next check-in on an ALL-audience event", () => {
+    const officer: GetMissingFieldsUser = { ...COMPLETE_USER, role: "eboard", house: "", houseVerifiedAt: null };
+    expect(getMissingFields(officer, ALL_EVENT, { SEASON })).toContain("house");
+  });
+
+  it("the same EBOARD member is NOT prompted for their House on an EBOARD_ONLY event — audience, not role", () => {
+    const officer: GetMissingFieldsUser = { ...COMPLETE_USER, role: "eboard", house: "", houseVerifiedAt: null };
+    expect(getMissingFields(officer, EBOARD_EVENT, { SEASON })).not.toContain("house");
+  });
+
+  it("an ADMIN is never prompted to complete a member profile, on either audience", () => {
+    const bareAdmin: GetMissingFieldsUser = {
+      ...COMPLETE_USER,
+      role: "admin",
+      studentId: "",
+      phone: "",
+      personalEmail: "",
+      classification: "",
+      major: "",
+      profileSeason: "",
+      duesPaidReported: null,
+      nationalMemberReported: null,
+      membershipSeason: "",
+      house: "",
+      houseVerifiedAt: null,
+      resumeFileId: null,
+    };
+    expect(getMissingFields(bareAdmin, ALL_EVENT, { SEASON })).toEqual([]);
+    expect(getMissingFields(bareAdmin, EBOARD_EVENT, { SEASON })).toEqual([]);
+  });
+
+  it("the seven seeded ADMIN accounts are unaffected — never asked for a member profile, only for the last name the seed leaves blank", () => {
+    // Shape of a prisma/seed.ts seedHardcodedAdmins row: firstName is the
+    // officer's position, lastName is deliberately blank, and nothing else
+    // on the member profile was ever filled in.
+    const seededOfficer: GetMissingFieldsUser = {
+      ...COMPLETE_USER,
+      role: "admin",
+      firstName: "President",
+      lastName: "",
+      studentId: "",
+      phone: "",
+      personalEmail: "",
+      classification: "",
+      major: "",
+      profileSeason: "",
+      duesPaidReported: null,
+      nationalMemberReported: null,
+      membershipSeason: "",
+      house: "",
+      houseVerifiedAt: null,
+      resumeFileId: null,
+    };
+    // lastName is the one thing still asked — it's the only field
+    // buildCoreFormSchema requires unconditionally, so it must stay in sync.
+    expect(getMissingFields(seededOfficer, ALL_EVENT, { SEASON })).toEqual(["lastName"]);
   });
 });
 
@@ -222,17 +300,27 @@ describe("validateCoreAnswers", () => {
     expect(result.majorOther).toBe("Undeclared");
   });
 
-  it("National = No hides and clears nsbeMembershipId even if one was submitted", () => {
+  it("National = No does NOT clear a submitted nsbeMembershipId — the two are independent", () => {
     const ctx = ctxFor(["nationalMember"]);
     const result = validateCoreAnswers(ctx, validAnswers({ nationalMember: false, nsbeMembershipId: "99999" }));
-    expect(result.nsbeMembershipId).toBeUndefined();
+    expect(result.nsbeMembershipId).toBe("99999");
   });
 
-  it("an nsbeMembershipId-only submission (national already reported, not re-asked) survives untouched", () => {
-    const ctx = ctxFor(["nsbeMembershipId"]);
-    const result = validateCoreAnswers(ctx, omit(validAnswers({ nsbeMembershipId: "55555" }), "nationalMember"));
+  it("an nsbeMembershipId survives on its own with the national question unanswered and unasked", () => {
+    const result = validateCoreAnswers(ctxFor([]), omit(validAnswers({ nsbeMembershipId: "55555" }), "nationalMember"));
     expect(result.nationalMember).toBeUndefined();
     expect(result.nsbeMembershipId).toBe("55555");
+  });
+
+  it("a blank nsbeMembershipId is accepted on every national answer — Yes, No, and unanswered", () => {
+    for (const nationalMember of [true, false, undefined]) {
+      const answers = validAnswers({ nsbeMembershipId: "" });
+      if (nationalMember === undefined) delete (answers as Record<string, unknown>).nationalMember;
+      else answers.nationalMember = nationalMember;
+
+      const result = validateCoreAnswers(ctxFor([]), answers);
+      expect(result.nsbeMembershipId).toBe("");
+    }
   });
 
   it("dropdown and yes/no questions are never satisfied by omission when getMissingFields asked for them — no server-side preselect exists", () => {
@@ -286,6 +374,25 @@ describe("validateCoreAnswers", () => {
   it("an explicit skip is a complete, valid answer on its own, even while House is missing", () => {
     const ctx = ctxFor(["house"]);
     expect(() => validateCoreAnswers(ctx, validAnswers({ houseSkipped: true }))).not.toThrow();
+  });
+
+  it("studentId/phone/personalEmail ARE required when getMissingFields asked for them", () => {
+    const ctx = ctxFor(["studentId", "phone", "personalEmail"]);
+    expect(() => validateCoreAnswers(ctx, omit(validAnswers(), "studentId"))).toThrow(AppError);
+    expect(() => validateCoreAnswers(ctx, omit(validAnswers(), "phone"))).toThrow(AppError);
+    expect(() => validateCoreAnswers(ctx, omit(validAnswers(), "personalEmail"))).toThrow(AppError);
+  });
+
+  it("an ADMIN check-in — nothing asked, so only the name is required and nothing else is invented", () => {
+    const result = validateCoreAnswers(ctxFor([]), { firstName: "Ada", lastName: "Lovelace" });
+    expect(result.studentId).toBeUndefined();
+    expect(result.phone).toBeUndefined();
+    expect(result.personalEmail).toBeUndefined();
+  });
+
+  it("a name is required no matter what getMissingFields asked for", () => {
+    expect(() => validateCoreAnswers(ctxFor([]), omit(validAnswers(), "firstName"))).toThrow(AppError);
+    expect(() => validateCoreAnswers(ctxFor([]), validAnswers({ lastName: "" }))).toThrow(AppError);
   });
 
   it("a resume on file: Keep requires no upload, Update requires one", () => {

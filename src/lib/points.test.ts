@@ -391,6 +391,25 @@ describe("memberTotal / computeStandings — Part 4 scoring", () => {
     expect(row?.points).toBe(4); // 3 event points + 1 game bonus
   });
 
+  it("an EBOARD member who reports dues and national membership still never appears on the member leaderboard", () => {
+    const attendance = [makeAttendance({ email: "a@x.edu" })];
+    // Collecting the data at signup is what changed; who scores is not.
+    // Fully reported for the current season — isEligible(officer) is true —
+    // and still filtered off the board by role alone.
+    const officer = makeMember({
+      email: "a@x.edu",
+      role: "eboard",
+      duesPaidReported: true,
+      nationalMemberReported: true,
+      membershipSeason: SEASON,
+    });
+    expect(isEligible(officer, SEASON)).toBe(true);
+
+    const standings = computeStandings(attendance, [officer], SEASON, [], [], NOW);
+    expect(standings.some((s) => s.email === "a@x.edu")).toBe(false);
+    expect(memberPointsFor(officer, makeEvent(), makeCategory())).toBe(0);
+  });
+
   it("a stale membershipSeason makes an otherwise-fully-reported member ineligible", () => {
     const attendance = [makeAttendance({ email: "a@x.edu" })];
     const standings = computeStandings(

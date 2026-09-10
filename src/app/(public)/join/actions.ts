@@ -249,7 +249,13 @@ export async function updateContactAction(input: {
   }
 }
 
-/** Step 6 — Membership (dues/national). Skipped entirely for EBOARD/ADMIN accounts by the wizard's own step list. */
+/**
+ * Membership — dues, national status, and the NSBE Membership ID. Skipped
+ * only by ADMIN accounts, via the wizard's own step list (see
+ * joinWizardRules.ts stepsFor); an EBOARD signup answers it like any member.
+ * The ID is optional and independent of the national answer: it's written
+ * whenever one was typed, and answering No never clears it.
+ */
 export async function updateMembershipAction(input: {
   duesPaid: boolean;
   nationalMember: boolean;

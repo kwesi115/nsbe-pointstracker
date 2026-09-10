@@ -1474,8 +1474,10 @@ export async function setNationalReported(
       data: {
         nationalMemberReported: reported,
         ...(season !== null ? { membershipSeason: season } : {}),
-        ...(reported && nsbeMembershipId !== undefined ? { nsbeMembershipId: nsbeMembershipId.trim() || null } : {}),
-        ...(!reported ? { nsbeMembershipId: null } : {}),
+        // Written whenever one was supplied, whatever `reported` says, and
+        // never cleared as a side effect of answering No — the ID is an
+        // independent field (a prior year's, or one still pending).
+        ...(nsbeMembershipId !== undefined ? { nsbeMembershipId: nsbeMembershipId.trim() || null } : {}),
       },
     });
     await logAdminAction(tx, orgId, { actor, action: "report_national", target: e, detail: String(reported) });
@@ -2441,8 +2443,22 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
   // effectiveDuesPaid/effectiveNationalMember fold in the "already reported"
   // case (question wasn't asked, so nothing was submitted — the true current
   // value is what duesAlreadyReported/nationalAlreadyReported already proved).
-  const effectiveDuesPaid = fullCore ? (duesAlreadyReported ? true : fullCore.duesPaid === true) : null;
-  const effectiveNationalMember = fullCore ? (nationalAlreadyReported ? true : fullCore.nationalMember === true) : null;
+  // "Already reported" reads the stored value rather than assuming true:
+  // getMissingFields also stops asking when the questions don't apply to
+  // this account at all (an ADMIN — see its "who you are" reduction), and
+  // an unasked question must snapshot what's actually on file, not a yes
+  // nobody ever gave. For a GENERAL/EBOARD member the two are identical,
+  // since dues/national only leave the missing set once they're true.
+  const effectiveDuesPaid = fullCore
+    ? duesAlreadyReported
+      ? user.duesPaidReported === true
+      : fullCore.duesPaid === true
+    : null;
+  const effectiveNationalMember = fullCore
+    ? nationalAlreadyReported
+      ? user.nationalMemberReported === true
+      : fullCore.nationalMember === true
+    : null;
   // Stamp membershipSeason only on a transition to true THIS submission —
   // answering "No" (or the question not being asked at all) never touches it.
   const stampSeason =
@@ -2462,9 +2478,13 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
           ? {
               firstName: fullCore.firstName,
               lastName: fullCore.lastName,
-              studentId: fullCore.studentId,
-              phone: fullCore.phone,
-              personalEmail: fullCore.personalEmail,
+              // Same "only in the payload when it was asked" rule as
+              // classification/major below — omit the key entirely
+              // otherwise so an account that was never asked (an ADMIN)
+              // doesn't have its existing value blanked.
+              ...(fullCore.studentId !== undefined ? { studentId: fullCore.studentId } : {}),
+              ...(fullCore.phone !== undefined ? { phone: fullCore.phone } : {}),
+              ...(fullCore.personalEmail !== undefined ? { personalEmail: fullCore.personalEmail } : {}),
               // classification/major are only in the payload when
               // getMissingFields asked for them — omit the key entirely
               // otherwise so the existing (already-current-for-this-season)
@@ -2482,12 +2502,13 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
               // entirely otherwise so the existing DB value (already true)
               // is left untouched.
               ...(!duesAlreadyReported ? { duesPaidReported: fullCore.duesPaid, duesReportedAt: now } : {}),
-              ...(!nationalAlreadyReported
-                ? { nationalMemberReported: fullCore.nationalMember, nsbeMembershipId: fullCore.nsbeMembershipId ?? null }
-                : fullCore.nsbeMembershipId !== undefined
-                  ? // National was already reported — this is the nsbeMembershipId-only gap-filler case (Part: id blank on file, asked on its own).
-                    { nsbeMembershipId: fullCore.nsbeMembershipId || null }
-                  : {}),
+              ...(!nationalAlreadyReported ? { nationalMemberReported: fullCore.nationalMember } : {}),
+              // Independent of the national answer in both directions: the
+              // ID is written whenever the form submitted one (blank means
+              // the member cleared it), and answering No never wipes it.
+              ...(fullCore.nsbeMembershipId !== undefined
+                ? { nsbeMembershipId: fullCore.nsbeMembershipId || null }
+                : {}),
               ...(stampSeason ? { membershipSeason: season } : {}),
               // A House and its screenshot are written TOGETHER, or not at
               // all — see buildCoreFormSchema's house superRefine (Part 1):
@@ -3518,6 +3539,10 @@ export async function redeemJoinCodeForSignup(input: RedeemJoinCodeForSignupInpu
       }
     }
 
+    // The audit trail for a redeemed join code: who signed up, which account
+    // row it created, and the role it granted. Nothing renders this — the
+    // /admin "new admin/E-Board accounts" banner that used to read it back is
+    // gone — but the record is the point, and it stays.
     await logAdminAction(tx, orgId, {
       actor: email,
       action: convertedFromGuest ? "join_code_guest_converted" : "join_code_signup",
@@ -3566,16 +3591,6 @@ export async function redeemGuestJoinCode(orgId: string, submittedCode: string, 
   });
 }
 
-/** Recent ADMIN/EBOARD grants — the data source for the /admin dashboard's "a new admin appeared" banner (Part 3). No separate notification table; the AdminLog row written at redemption time IS the notification. */
-export async function getRecentPrivilegedJoinCodeGrants(orgId: string, sinceDays = 14): Promise<AdminLogEntry[]> {
-  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60_000);
-  const rows = await prisma.adminLog.findMany({
-    where: { orgId, action: "join_code_signup", createdAt: { gte: since } },
-    include: { actor: { select: { email: true } } },
-    orderBy: { createdAt: "desc" },
-  });
-  return rows.map(adminLogToDomain).filter((entry) => entry.detail.includes("-> admin") || entry.detail.includes("-> eboard"));
-}
 
 // ---------------------------------------------------------------------------
 // Form builder — schema-locked once any response exists for the event.
