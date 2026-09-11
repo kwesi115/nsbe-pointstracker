@@ -1,16 +1,23 @@
+import Link from "next/link";
 import AdminNav from "@/components/admin/AdminNav";
 import VerificationQueue from "@/components/admin/VerificationQueue";
-import { getDuesPendingMembers, getHousePendingMembers, getNationalPendingMembers } from "@/lib/repo";
+import {
+  getDuesPendingMembers,
+  getHouseMissingMembers,
+  getHousePendingMembers,
+  getNationalPendingMembers,
+} from "@/lib/repo";
 import { isEboardOrAdmin } from "@/lib/session";
 import { requireVerificationsWrite } from "@/lib/permissions";
 
 export default async function AdminVerificationsPage() {
   const session = await requireVerificationsWrite();
   const orgId = session.user.orgId;
-  const [dues, national, house] = await Promise.all([
+  const [dues, national, house, houseMissing] = await Promise.all([
     getDuesPendingMembers(orgId),
     getNationalPendingMembers(orgId),
     getHousePendingMembers(orgId),
+    getHouseMissingMembers(orgId),
   ]);
 
   return (
@@ -35,6 +42,25 @@ export default async function AdminVerificationsPage() {
       </p>
 
       <VerificationQueue dues={dues} national={national} house={house} />
+
+      {/* The House tab can only show Houses that were actually submitted. An
+          account that never answered the House step has nothing to review
+          and would never appear anywhere — which is exactly how House-less
+          accounts went unnoticed. Surfaced here, next to the queue an admin
+          already works through, rather than left to be found by accident. */}
+      {houseMissing.length > 0 ? (
+        <p className="rounded-lg border border-amber bg-amber/10 px-4 py-3 text-sm text-ink">
+          <span className="font-semibold">
+            {houseMissing.length} account{houseMissing.length === 1 ? " has" : "s have"} no House on file.
+          </span>{" "}
+          They&apos;re asked again at their next check-in and on their account page, but nothing here can review a House
+          that was never submitted.{" "}
+          <Link href="/admin/members?house=missing" className="underline underline-offset-2">
+            See who
+          </Link>
+          .
+        </p>
+      ) : null}
     </main>
   );
 }

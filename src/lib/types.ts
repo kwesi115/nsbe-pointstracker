@@ -60,9 +60,15 @@ export interface Member {
   /** Displayed on the internal E-Board leaderboard only. Meaningful only when role === "eboard". */
   eboardPosition: string;
 
+  // Four distinct states, never three — see lib/claim-state.ts claimState,
+  // which is the only thing allowed to interpret this group of fields.
+  // duesPaidReported is what the MEMBER said; duesVerifiedAt is what an
+  // ADMIN checked. They are not interchangeable and must never render the
+  // same glyph.
   duesPaidReported: boolean | null;
   duesReportedAt: Date | null;
   duesVerifiedAt: Date | null;
+  duesVerifiedById: string;
   duesRevokedAt: Date | null;
   duesRevokedById: string;
   duesRevokedNote: string;
@@ -70,6 +76,7 @@ export interface Member {
   nationalMemberReported: boolean | null;
   nsbeMembershipId: string;
   nationalVerifiedAt: Date | null;
+  nationalVerifiedById: string;
   nationalRevokedAt: Date | null;
   nationalRevokedById: string;
   nationalRevokedNote: string;
@@ -82,6 +89,8 @@ export interface Member {
 
   house: string;
   houseVerifiedAt: Date | null;
+  /** A User id, or the literal HOUSE_SYSTEM_VERIFIER for an E-Board House verified on selection. */
+  houseVerifiedById: string;
   houseProofFileId: string | null;
 
   resumeFileId: string | null;

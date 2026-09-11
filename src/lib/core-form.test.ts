@@ -187,6 +187,24 @@ describe("getMissingFields", () => {
     expect(getMissingFields(setButUnverified, ALL_EVENT, { SEASON })).not.toContain("house");
   });
 
+  // The exact shape of the House-less accounts found in production: the
+  // wizard was abandoned (or the House step explicitly skipped) after the
+  // contact and membership steps, so everything up to House is filled in and
+  // house is null. These accounts are ACTIVE — decision (b) — so the gap
+  // filler is what has to catch them, and it does.
+  it("an abandoned signup (contact and membership done, House never answered) is prompted for house, and ONLY for house", () => {
+    const abandoned: GetMissingFieldsUser = {
+      ...COMPLETE_USER,
+      house: "",
+      houseVerifiedAt: null,
+      duesPaidReported: true,
+      nationalMemberReported: true,
+      membershipSeason: SEASON,
+    };
+    expect(getMissingFields(abandoned, ALL_EVENT, { SEASON })).toContain("house");
+    expect(getMissingFields(abandoned, ALL_EVENT, { SEASON }).filter((f) => f !== "house" && f !== "resume")).toEqual([]);
+  });
+
   it("resume is missing only when nothing is on file at all", () => {
     expect(getMissingFields(COMPLETE_USER, ALL_EVENT, { SEASON })).not.toContain("resume");
     expect(getMissingFields({ ...COMPLETE_USER, resumeFileId: null }, ALL_EVENT, { SEASON })).toContain("resume");

@@ -9,8 +9,20 @@ const TRI_FILTERS = [
   { key: "eligible", label: "Eligible", yes: "Eligible", no: "Ineligible" },
   { key: "dues", label: "Dues", yes: "Reported", no: "Not reported" },
   { key: "national", label: "National", yes: "Reported", no: "Not reported" },
-  { key: "house", label: "House", yes: "Verified", no: "Not verified" },
   { key: "resume", label: "Resume", yes: "On file", no: "None" },
+] as const;
+
+/**
+ * House is its own filter rather than one of the tri-states above: "no
+ * House on file at all" is a distinct, actionable state (the account was
+ * never asked, or skipped the step) and needs to be findable on its own.
+ * Folded into "Not verified" it was indistinguishable from a House waiting
+ * on review. See admin/members/page.tsx asHouseFilter.
+ */
+const HOUSE_OPTIONS = [
+  { value: "verified", label: "Verified" },
+  { value: "pending", label: "Awaiting review" },
+  { value: "missing", label: "Missing — no House on file" },
 ] as const;
 
 const STATUS_OPTIONS = [
@@ -29,7 +41,7 @@ const CLASSIFICATION_OPTIONS = [
 
 // Every filter key EXCEPT search and role — those two stay inline, everything
 // else here lives in the "Filters" popover and counts toward its badge.
-const POPOVER_KEYS = ["status", ...TRI_FILTERS.map((f) => f.key), "major", "classification"] as const;
+const POPOVER_KEYS = ["status", ...TRI_FILTERS.map((f) => f.key), "house", "major", "classification"] as const;
 
 const DEBOUNCE_MS = 300;
 
@@ -37,6 +49,7 @@ function labelFor(key: string, value: string): string {
   if (key === "status") return STATUS_OPTIONS.find((o) => o.value === value)?.label ?? value;
   if (key === "classification") return CLASSIFICATION_OPTIONS.find((o) => o.value === value)?.label ?? value;
   if (key === "role") return value === "eboard" ? "E-Board" : value.charAt(0).toUpperCase() + value.slice(1);
+  if (key === "house") return `House: ${HOUSE_OPTIONS.find((o) => o.value === value)?.label ?? value}`;
   const tri = TRI_FILTERS.find((f) => f.key === key);
   if (tri) return value === "yes" ? tri.yes : tri.no;
   return value;
@@ -180,6 +193,18 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
                     {majors.map((m) => (
                       <option key={m} value={m}>
                         {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="col-span-2 flex flex-col gap-1 text-xs font-medium text-muted">
+                  House
+                  <select defaultValue={searchParams.get("house") ?? "all"} onChange={(e) => updateParam("house", e.target.value)} className={selectClass}>
+                    <option value="all">All</option>
+                    {HOUSE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
                       </option>
                     ))}
                   </select>

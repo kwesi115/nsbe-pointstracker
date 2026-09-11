@@ -1,3 +1,4 @@
+import { CLAIM_STATE_LABEL } from "@/lib/claim-state";
 import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { toCsv } from "@/lib/csv";
@@ -110,8 +111,11 @@ export async function buildMembersCsv(orgId: string, emails: string[]): Promise<
     m.email,
     m.classification,
     m.major,
-    m.duesPaidReported === true ? "Reported" : "Not reported",
-    m.nationalMemberReported === true ? "Reported" : "Not reported",
+    // The four states, not "reported / not reported" — an export that can't
+    // tell a self-report from a verified claim is the same bug the roster
+    // had, just in a spreadsheet (see lib/claim-state.ts).
+    CLAIM_STATE_LABEL[m.duesState],
+    CLAIM_STATE_LABEL[m.nationalState],
     m.eligible ? "Yes" : "No",
     m.houseState,
     m.resumeFileId ? "On file" : "None",

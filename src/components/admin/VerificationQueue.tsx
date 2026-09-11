@@ -13,13 +13,20 @@ import Button from "@/components/ui/Button";
 import RevokeDialog from "@/components/admin/RevokeDialog";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
-import type { Member } from "@/lib/types";
+import type { Member, Role } from "@/lib/types";
 
 interface Tab {
   id: VerificationQueueTab;
   label: string;
   members: Member[];
 }
+
+const ROLE_LABEL: Record<Role, string> = {
+  general: "General",
+  eboard: "E-Board",
+  admin: "Admin",
+  guest: "Guest",
+};
 
 export default function VerificationQueue({
   dues,
@@ -35,6 +42,7 @@ export default function VerificationQueue({
     { id: "national", label: "Unverified national claims", members: national },
     { id: "house", label: "House pending", members: house },
   ];
+  const total = dues.length + national.length + house.length;
   const [activeTab, setActiveTab] = useState<VerificationQueueTab>("dues");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
@@ -114,10 +122,20 @@ export default function VerificationQueue({
             }`}
           >
             {t.label}
-            {t.members.length > 0 ? <Badge tone={activeTab === t.id ? "muted" : "amber"}>{t.members.length}</Badge> : null}
+            {/* Always rendered, including at zero. A hidden badge made an
+                empty tab ambiguous — "nothing pending" and "the query is
+                filtering everything out" looked identical, which is how a
+                queue silently missing 31 E-Board claims went unnoticed. */}
+            <Badge tone={activeTab === t.id ? "muted" : t.members.length > 0 ? "amber" : "muted"}>{t.members.length}</Badge>
           </button>
         ))}
       </div>
+
+      <p className="text-xs text-muted">
+        {total === 0
+          ? "Nothing outstanding — every claim on the roster has been verified or revoked."
+          : `${total} claim${total === 1 ? "" : "s"} awaiting review across all three tabs. Every role is included — officers pay dues and hold national memberships too.`}
+      </p>
 
       {selected.size > 0 ? (
         <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2">
@@ -146,6 +164,10 @@ export default function VerificationQueue({
             </th>
             <th className={thClass}>Name</th>
             <th className={thClass}>Email</th>
+            {/* An admin verifying a claim needs to know whose claim it is —
+                an officer's dues are checked against a different record than
+                a general member's. */}
+            <th className={thClass}>Role</th>
             {activeTab === "national" ? <th className={thClass}>NSBE ID</th> : null}
             {activeTab === "house" ? <th className={thClass}>House</th> : null}
             {activeTab === "house" ? <th className={thClass}>Proof</th> : null}
@@ -167,6 +189,9 @@ export default function VerificationQueue({
                   {m.firstName} {m.lastName}
                 </td>
                 <td className={tdClass}>{m.email}</td>
+                <td className={tdClass}>
+                  <Badge tone={m.role === "eboard" ? "signal" : m.role === "admin" ? "amber" : "muted"}>{ROLE_LABEL[m.role]}</Badge>
+                </td>
                 {activeTab === "national" ? <td className={`${tdClass} numeric`}>{m.nsbeMembershipId || "—"}</td> : null}
                 {activeTab === "house" ? <td className={tdClass}>{m.house || "—"}</td> : null}
                 {activeTab === "house" ? (

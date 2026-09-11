@@ -551,12 +551,18 @@ function randomOf<T>(arr: T[]): T {
  * see Part 9 of the plan. i 0-9 fully verified, 10-19 dues only, 20-29
  * national only, 30-39 neither.
  */
-function eligibilityFor(i: number): {
+function eligibilityFor(
+  i: number,
+  /** Whoever "verified" the seeded claims. A verified claim with no verifier on it is the data corruption scripts/repair-claim-state.ts reports — seed data must not manufacture it. */
+  verifierId: string | null,
+): {
   duesPaidReported: boolean;
   duesReportedAt: Date | null;
   duesVerifiedAt: Date | null;
+  duesVerifiedById: string | null;
   nationalMemberReported: boolean;
   nationalVerifiedAt: Date | null;
+  nationalVerifiedById: string | null;
   membershipSeason: string | null;
 } {
   const group = Math.floor(i / 10);
@@ -577,8 +583,10 @@ function eligibilityFor(i: number): {
     duesPaidReported: duesReported,
     duesReportedAt: duesReported ? now : null,
     duesVerifiedAt: duesOk ? now : null,
+    duesVerifiedById: duesOk ? verifierId : null,
     nationalMemberReported: nationalReported,
     nationalVerifiedAt: nationalOk ? now : null,
+    nationalVerifiedById: nationalOk ? verifierId : null,
     // Self-reported eligibility (Part 1) — stamped whenever either flag is
     // true, same rule lib/repo.ts setDuesReported/setNationalReported apply.
     // Only "group 0" (both true) actually clears isEligible's season check;
@@ -593,7 +601,7 @@ const PLACEHOLDER_PNG = Buffer.from(
   "base64",
 );
 
-async function seedFakeMembers(orgId: string): Promise<string[]> {
+async function seedFakeMembers(orgId: string, verifierId: string | null): Promise<string[]> {
   const passwordHash = await hashPassword(FAKE_DEV_PASSWORD);
   const emails: string[] = [];
 
@@ -609,6 +617,10 @@ async function seedFakeMembers(orgId: string): Promise<string[]> {
     // render — everyone else has no House yet.
     const house = i < 5 ? HOUSE_NAMES[i % HOUSE_NAMES.length] : i === 5 ? HOUSE_NAMES[0] : null;
     const houseVerifiedAt = i < 5 ? new Date() : null;
+    // Same rule as the dues/national verifier ids — a verified anything
+    // carries whoever verified it, or the seed is manufacturing exactly the
+    // corruption scripts/repair-claim-state.ts exists to report.
+    const houseVerifiedById = i < 5 ? verifierId : null;
 
     // Unlike admin accounts (never clobbered on re-run — see seedInitialAdmins),
     // these are synthetic dev data with nothing real to protect, so every
@@ -624,10 +636,11 @@ async function seedFakeMembers(orgId: string): Promise<string[]> {
       membership: MEMBERSHIPS[i % MEMBERSHIPS.length],
       house,
       houseVerifiedAt,
+      houseVerifiedById,
       role: Role.GENERAL,
       status: UserStatus.ACTIVE,
       mustChangePassword: false,
-      ...eligibilityFor(i),
+      ...eligibilityFor(i, verifierId),
     };
 
     const user = await prisma.user.upsert({
@@ -667,7 +680,7 @@ async function seedFakeMembers(orgId: string): Promise<string[]> {
  * those indices are already load-bearing for the eligibility/House demo
  * states above.
  */
-async function seedFakeEboardMembers(orgId: string): Promise<string[]> {
+async function seedFakeEboardMembers(orgId: string, verifierId: string | null): Promise<string[]> {
   const passwordHash = await hashPassword(FAKE_DEV_PASSWORD);
   const OFFICERS = [
     { firstName: "Morgan", lastName: "Price", position: "President" },
@@ -704,8 +717,10 @@ async function seedFakeEboardMembers(orgId: string): Promise<string[]> {
         mustChangePassword: false,
         duesPaidReported: true,
         duesVerifiedAt: now,
+        duesVerifiedById: verifierId,
         nationalMemberReported: true,
         nationalVerifiedAt: now,
+        nationalVerifiedById: verifierId,
         membershipSeason: SEASON,
       },
     });
@@ -1060,8 +1075,15 @@ async function seedProduction(): Promise<{ orgId: string; categoryIds: Map<strin
  * environment can't silently turn this on.
  */
 async function seedFakeData(orgId: string, categoryIds: Map<string, string>) {
-  const generalEmails = await seedFakeMembers(orgId);
-  const eboardEmails = await seedFakeEboardMembers(orgId);
+  // Whoever the seeded verified claims are attributed to. seedProduction has
+  // already created the officer ADMIN accounts, so one of them stands in for
+  // the human who would have clicked Verify. Null (no admin seeded at all) is
+  // survivable — it just means the fake data contains rows the repair script
+  // will flag, which is itself worth seeing in dev.
+  const verifier = await prisma.user.findFirst({ where: { orgId, role: Role.ADMIN }, select: { id: true }, orderBy: { createdAt: "asc" } });
+  const verifierId = verifier?.id ?? null;
+  const generalEmails = await seedFakeMembers(orgId, verifierId);
+  const eboardEmails = await seedFakeEboardMembers(orgId, verifierId);
   await seedFakeAdmin(orgId);
   const { pastEventIds, eboardOnlyEventIds, nsbeWeekEventIds } = await seedFakeEvents(orgId, categoryIds);
   await seedFakeRegistrations(orgId, generalEmails, eboardEmails, pastEventIds, eboardOnlyEventIds, nsbeWeekEventIds);

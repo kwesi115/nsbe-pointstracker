@@ -281,21 +281,56 @@ export async function updateMembershipAction(input: {
   }
 }
 
+export interface HouseStepInput {
+  /**
+   * The member explicitly chose "I haven't taken the test yet." REQUIRED to
+   * be present (true or false) — an absent flag is a malformed submission,
+   * not a skip.
+   *
+   * This is the server-side half of the House step, and it is the half that
+   * was missing: the step used to accept "no arguments at all" as a complete
+   * answer, so any POST that simply omitted the House fields — an abandoned
+   * wizard, a replayed request, a client that never rendered the step —
+   * sailed through and left an ACTIVE account with a null House. The House
+   * answer is now mandatory; WHICH answer is still the member's choice, and
+   * "not yet" remains a legitimate one (the House test is an external site;
+   * a member genuinely may not have taken it). An unanswered step is
+   * rejected, and getMissingFields keeps asking until it IS answered — see
+   * lib/core-form.ts, and docs/CLAIM-STATE.md for the (b) decision.
+   */
+  houseSkipped: boolean;
+  house?: string;
+  houseProofFileId?: string;
+}
+
 /**
  * Step 7 — House. No Yes/No question (Part 1 restructure): an explicit skip
- * ("I haven't taken the test yet") — both arguments omitted — is itself a
- * complete, valid answer for every role. It writes nothing (house stays
- * null), and getMissingFields re-asks at the member's next check-in.
- * Providing a House requires the screenshot and vice versa, re-checked
- * server-side independently of whatever the client already validated —
- * except for a role that self-verifies, where the House alone is complete.
+ * ("I haven't taken the test yet") is a complete, valid answer for every
+ * role, but it must be stated, not inferred from silence. It writes nothing
+ * (house stays null), and getMissingFields re-asks at the member's next
+ * check-in and lists it on /account. Providing a House requires the
+ * screenshot and vice versa, re-checked server-side independently of
+ * whatever the client already validated — except for a role that
+ * self-verifies, where the House alone is complete.
  */
-export async function setHouseAction(house?: string, houseProofFileId?: string): Promise<JoinStepState> {
+export async function setHouseAction(input: HouseStepInput): Promise<JoinStepState> {
   const session = await requireWizardSession();
   if (!session) return SESSION_EXPIRED_STATE;
 
-  // Explicit skip — neither field provided.
-  if (!house && !houseProofFileId) return { error: null };
+  const { houseSkipped, house, houseProofFileId } = input ?? {};
+  if (typeof houseSkipped !== "boolean") {
+    return { error: `Answer the House step — pick your House, or choose "I haven't taken the test yet."` };
+  }
+
+  // An explicit skip. Anything the client may have half-filled is discarded:
+  // the member said they don't have a result yet, and that answer wins.
+  if (houseSkipped) return { error: null };
+
+  // Not a skip, so a real answer is required — a POST that reaches here with
+  // nothing in it is rejected rather than silently treated as a skip.
+  if (!house && !houseProofFileId) {
+    return { error: `Select your House and upload your screenshot, or choose "I haven't taken the test yet."` };
+  }
 
   const trimmedHouse = house?.trim() ?? "";
   const { houses } = await getCoreFormConfig(session.user.orgId);

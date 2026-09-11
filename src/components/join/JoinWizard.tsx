@@ -844,10 +844,13 @@ function HouseStep({
     setError(null);
     setSessionExpired(false);
     try {
-      const result = await setHouseAction(
-        draft.houseSkipped ? undefined : draft.house || undefined,
-        draft.houseSkipped ? undefined : draft.houseProofFileId,
-      );
+      const result = await setHouseAction({
+        // Always sent, never inferred from absent fields — the server
+        // rejects a House step that carries no answer at all.
+        houseSkipped: draft.houseSkipped,
+        house: draft.houseSkipped ? undefined : draft.house || undefined,
+        houseProofFileId: draft.houseSkipped ? undefined : draft.houseProofFileId,
+      });
       if (result.error) {
         setError(result.error);
         setSessionExpired(Boolean(result.sessionExpired));

@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { Check, ExternalLink, Hand } from "lucide-react";
 import { useState, useTransition } from "react";
 import { reportDuesAction, reportNationalAction, updateProfileAction } from "@/app/(member)/account/actions";
 import Badge from "@/components/ui/Badge";
@@ -8,6 +8,7 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Field, { inputClass } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
+import { claimState, type ClaimState } from "@/lib/claim-state";
 import { coreField } from "@/lib/core-form";
 import type { Member } from "@/lib/types";
 
@@ -15,11 +16,47 @@ type MembershipMember = Pick<
   Member,
   | "duesPaidReported"
   | "duesVerifiedAt"
+  | "duesRevokedAt"
+  | "duesRevokedNote"
   | "nationalMemberReported"
   | "nationalVerifiedAt"
+  | "nationalRevokedAt"
+  | "nationalRevokedNote"
   | "membershipSeason"
   | "nsbeMembershipId"
 >;
+
+/**
+ * The member-facing half of the claim-state fix. This used to print
+ * "Reported ✓" off duesPaidReported alone — the same check mark the roster
+ * showed for a verified claim — which taught members their self-report had
+ * been checked when nobody had looked at it. A self-report says
+ * "Self-reported"; only an admin's verification earns a check.
+ */
+function ClaimLine({ state, note }: { state: ClaimState; note: string }) {
+  if (state === "verified") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-signal">
+        <Check size={14} aria-hidden="true" />
+        Verified by E-Board
+      </span>
+    );
+  }
+  if (state === "revoked") {
+    return (
+      <span className="text-xs font-semibold text-alert">Revoked{note ? ` — ${note}` : ""}</span>
+    );
+  }
+  if (state === "pending") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#7a4d00]">
+        <Hand size={14} aria-hidden="true" />
+        Self-reported
+      </span>
+    );
+  }
+  return <span className="text-xs text-muted">Not reported</span>;
+}
 
 /**
  * The highest-value surface in the app for an ineligible member (Part 7):
@@ -57,9 +94,16 @@ export default function MembershipSection({
   }
 
   const seasonMatches = member.membershipSeason === season;
+  // "Confirmed" here means confirmed FOR THE LEADERBOARD — reported by the
+  // member, current season. It is deliberately not verification: eligibility
+  // is driven by the reported flags alone (see lib/points.ts isEligible), and
+  // this fix must not change who is on the board. The claim STATE below is a
+  // separate, honest statement about whether anyone has checked it.
   const duesConfirmed = member.duesPaidReported === true && seasonMatches;
   const nationalConfirmed = member.nationalMemberReported === true && seasonMatches;
   const eligible = duesConfirmed && nationalConfirmed;
+  const duesState = claimState(member.duesPaidReported, member.duesVerifiedAt, member.duesRevokedAt);
+  const nationalState = claimState(member.nationalMemberReported, member.nationalVerifiedAt, member.nationalRevokedAt);
 
   function report(action: () => Promise<{ error: string | null }>, label: string) {
     startTransition(async () => {
@@ -84,10 +128,8 @@ export default function MembershipSection({
             <div className="flex flex-col gap-1">
               <p className="text-sm font-medium text-ink">Chapter dues{season ? ` · ${season}` : ""}</p>
               <div className="flex items-center gap-2">
-                <span className={`text-xs ${duesConfirmed ? "font-semibold text-signal" : "text-muted"}`}>
-                  {duesConfirmed ? "Reported ✓" : "Not reported"}
-                </span>
-                {member.duesVerifiedAt ? <Badge tone="signal">Verified</Badge> : null}
+                <ClaimLine state={duesState} note={member.duesRevokedNote} />
+                {duesConfirmed ? <Badge tone="muted">Counts for the leaderboard</Badge> : null}
               </div>
             </div>
             {!duesConfirmed ? (
@@ -114,10 +156,8 @@ export default function MembershipSection({
             <div className="flex flex-col gap-1">
               <p className="text-sm font-medium text-ink">National NSBE membership{season ? ` · ${season}` : ""}</p>
               <div className="flex items-center gap-2">
-                <span className={`text-xs ${nationalConfirmed ? "font-semibold text-signal" : "text-muted"}`}>
-                  {nationalConfirmed ? "Reported ✓" : "Not reported"}
-                </span>
-                {member.nationalVerifiedAt ? <Badge tone="signal">Verified</Badge> : null}
+                <ClaimLine state={nationalState} note={member.nationalRevokedNote} />
+                {nationalConfirmed ? <Badge tone="muted">Counts for the leaderboard</Badge> : null}
               </div>
             </div>
             {!nationalConfirmed ? (

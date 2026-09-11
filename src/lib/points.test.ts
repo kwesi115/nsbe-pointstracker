@@ -108,12 +108,14 @@ function makeMember(overrides: Partial<Member> = {}): Member {
     duesPaidReported: true,
     duesReportedAt: NOW,
     duesVerifiedAt: NOW,
+    duesVerifiedById: "",
     duesRevokedAt: null,
     duesRevokedById: "",
     duesRevokedNote: "",
     nationalMemberReported: true,
     nsbeMembershipId: "",
     nationalVerifiedAt: NOW,
+    nationalVerifiedById: "",
     nationalRevokedAt: null,
     nationalRevokedById: "",
     nationalRevokedNote: "",
@@ -121,6 +123,7 @@ function makeMember(overrides: Partial<Member> = {}): Member {
     profileSeason: SEASON,
     house: "",
     houseVerifiedAt: null,
+    houseVerifiedById: "",
     houseProofFileId: null,
     resumeFileId: null,
     resumeUpdatedAt: null,
@@ -447,6 +450,35 @@ describe("isEligible", () => {
     expect(
       isEligible({ duesPaidReported: true, nationalMemberReported: true, membershipSeason: "" }, ""),
     ).toBe(false);
+  });
+
+  /**
+   * The guard on the claim-state display fix: making the roster tell a
+   * self-report apart from a verification must not move one person on or off
+   * the leaderboard. Eligibility reads the REPORTED flags and the season, and
+   * nothing else — every combination of verify/revoke stamps over the same
+   * reported flags gives the same answer.
+   */
+  it("is identical across all four claim states for the same reported flags", () => {
+    const NOW2 = new Date("2026-09-11T00:00:00Z");
+    const reportedTrue = { duesPaidReported: true, nationalMemberReported: true };
+    const variants = [
+      { label: "pending", ...reportedTrue, duesVerifiedAt: null, nationalVerifiedAt: null, duesRevokedAt: null, nationalRevokedAt: null },
+      { label: "verified", ...reportedTrue, duesVerifiedAt: NOW2, nationalVerifiedAt: NOW2, duesRevokedAt: null, nationalRevokedAt: null },
+      { label: "stale revoke stamp", ...reportedTrue, duesVerifiedAt: null, nationalVerifiedAt: null, duesRevokedAt: NOW2, nationalRevokedAt: NOW2 },
+    ];
+    for (const v of variants) {
+      expect(isEligible(makeMember(v), SEASON), `${v.label} must not change eligibility`).toBe(true);
+    }
+  });
+
+  it("a revoked claim drops the member only because revoke sets the REPORTED flag false, not because of the stamp", () => {
+    const stampOnly = makeMember({ duesRevokedAt: new Date(), duesPaidReported: true });
+    expect(isEligible(stampOnly, SEASON)).toBe(true);
+
+    // What revokeDues actually writes: reported false AND the stamp.
+    const reallyRevoked = makeMember({ duesRevokedAt: new Date(), duesPaidReported: false });
+    expect(isEligible(reallyRevoked, SEASON)).toBe(false);
   });
 });
 

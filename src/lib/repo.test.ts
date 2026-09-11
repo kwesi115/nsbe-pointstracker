@@ -41,7 +41,10 @@ import {
   saveFormFields,
   setConfigValue,
   setDuesReported,
+  getDuesPendingMembers,
+  getHouseMissingMembers,
   getHousePendingMembers,
+  getNationalPendingMembers,
   HOUSE_SYSTEM_VERIFIER,
   setHouseAssignment,
   setMemberRole,
@@ -588,6 +591,160 @@ describe("registerForEvent — self-reported eligibility (Part 1)", () => {
 
     const after = await getStandings(orgId);
     expect(after.some((s) => s.email === user.email)).toBe(true);
+  });
+});
+
+/**
+ * The Membership Audit queue. These queries used to carry `role: GENERAL`,
+ * which silently hid every E-Board claim — on the Howard roster that was 31
+ * of 34 outstanding dues claims. A claim is audited on its STATE, never on
+ * who made it.
+ */
+describe("Membership Audit queue — every pending claim, whatever the role", () => {
+  it("an EBOARD member with a pending dues claim appears in the queue", async () => {
+    const officer = await makeUser({ role: Role.EBOARD, duesPaidReported: true, duesVerifiedAt: null });
+
+    const pending = await getDuesPendingMembers(orgId);
+
+    expect(pending.map((m) => m.email)).toContain(officer.email);
+  });
+
+  it("an EBOARD member with a pending national claim appears in the queue", async () => {
+    const officer = await makeUser({ role: Role.EBOARD, nationalMemberReported: true, nationalVerifiedAt: null });
+
+    const pending = await getNationalPendingMembers(orgId);
+
+    expect(pending.map((m) => m.email)).toContain(officer.email);
+  });
+
+  it("every role with a pending claim is in the queue — GENERAL, EBOARD and ADMIN alike", async () => {
+    const users = await Promise.all(
+      [Role.GENERAL, Role.EBOARD, Role.ADMIN].map((role) =>
+        makeUser({ role, duesPaidReported: true, duesVerifiedAt: null }),
+      ),
+    );
+
+    const emails = (await getDuesPendingMembers(orgId)).map((m) => m.email);
+
+    for (const u of users) expect(emails).toContain(u.email);
+  });
+
+  // The count check the symptom report asked for: the queue must equal a
+  // direct database count of the pending state, with no third number
+  // possible. An admin who can't trust the count can't trust the queue.
+  it("the queue size equals a direct database count of reported-and-unverified accounts", async () => {
+    await makeUser({ role: Role.EBOARD, duesPaidReported: true, duesVerifiedAt: null });
+    await makeUser({ role: Role.GENERAL, duesPaidReported: true, duesVerifiedAt: null });
+    await makeUser({ role: Role.GENERAL, duesPaidReported: true, duesVerifiedAt: new Date() });
+    await makeUser({ role: Role.GENERAL, duesPaidReported: false, duesVerifiedAt: null });
+
+    const queue = await getDuesPendingMembers(orgId);
+    const direct = await prisma.user.count({
+      where: { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null },
+    });
+
+    expect(queue.length).toBe(direct);
+  });
+
+  it("verifying a claim moves it out of the queue and records WHO verified it", async () => {
+    const actor = await makeUser({ role: Role.ADMIN });
+    const user = await makeUser({ duesPaidReported: true, duesVerifiedAt: null });
+    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).toContain(user.email);
+
+    await verifyDues(orgId, user.email, actor.email);
+
+    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).not.toContain(user.email);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.duesVerifiedAt).not.toBeNull();
+    // A verified claim with no verifier on it is unauditable — "verified by
+    // whom?" must have an answer.
+    expect(row.duesVerifiedById).toBe(actor.id);
+  });
+
+  it("verifying national records its verifier too", async () => {
+    const actor = await makeUser({ role: Role.ADMIN });
+    const user = await makeUser({ nationalMemberReported: true, nationalVerifiedAt: null });
+
+    await verifyNational(orgId, user.email, actor.email);
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.nationalVerifiedById).toBe(actor.id);
+  });
+
+  it("verifying a House records its verifier", async () => {
+    const actor = await makeUser({ role: Role.ADMIN });
+    const user = await makeUser();
+    await setHouseAssignment(orgId, user.email, "House Turing", "file_1", user.email);
+
+    await verifyHouse(orgId, user.email, actor.email);
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.houseVerifiedById).toBe(actor.id);
+  });
+
+  it("a revoked claim is not in the queue — it has already been decided", async () => {
+    const actor = await makeUser({ role: Role.ADMIN });
+    const user = await makeUser({ duesPaidReported: true, duesVerifiedAt: null });
+
+    await revokeDues(orgId, user.email, actor.email, "No record of payment");
+
+    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).not.toContain(user.email);
+  });
+
+  /**
+   * The trap the revoke/re-report pair used to set: revoking flips the
+   * reported flag false AND stamps duesRevokedAt. If the member then claims
+   * again, the reported flag goes back to true — and if the revoke stamp
+   * survived, the row would read "revoked" forever: invisible to the audit
+   * queue, while the live reported flag kept them on the leaderboard.
+   */
+  it("re-reporting after a revoke clears the stale revoke stamp and puts the claim back in the queue", async () => {
+    const actor = await makeUser({ role: Role.ADMIN });
+    const user = await makeUser({ duesPaidReported: true, duesVerifiedAt: null });
+    await revokeDues(orgId, user.email, actor.email, "No record of payment");
+
+    await setDuesReported(orgId, user.email, true, user.email);
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.duesPaidReported).toBe(true);
+    expect(row.duesRevokedAt).toBeNull();
+    expect(row.duesRevokedNote).toBeNull();
+    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).toContain(user.email);
+  });
+
+  it("a check-in that re-reports dues after a revoke clears the stamp too — same rule, second write site", async () => {
+    const actor = await makeUser({ role: Role.ADMIN });
+    const user = await makeUser({ duesPaidReported: true, duesVerifiedAt: null });
+    await revokeDues(orgId, user.email, actor.email, "No record of payment");
+    const event = await makeOpenEvent();
+
+    await registerForEvent({
+      orgId,
+      email: user.email,
+      eventId: event.id,
+      core: validCore({ duesPaid: true, nationalMember: true }),
+      extra: {},
+    });
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.duesPaidReported).toBe(true);
+    expect(row.duesRevokedAt).toBeNull();
+    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).toContain(user.email);
+  });
+
+  it("getHouseMissingMembers finds accounts with no House, and excludes ADMINs (who are never asked for one)", async () => {
+    const member = await makeUser({ role: Role.GENERAL });
+    const officer = await makeUser({ role: Role.EBOARD });
+    const admin = await makeUser({ role: Role.ADMIN });
+    const withHouse = await makeUser({ role: Role.GENERAL });
+    await setHouseAssignment(orgId, withHouse.email, "House Turing", "file_1", withHouse.email);
+
+    const emails = (await getHouseMissingMembers(orgId)).map((m) => m.email);
+
+    expect(emails).toContain(member.email);
+    expect(emails).toContain(officer.email);
+    expect(emails).not.toContain(admin.email);
+    expect(emails).not.toContain(withHouse.email);
   });
 });
 

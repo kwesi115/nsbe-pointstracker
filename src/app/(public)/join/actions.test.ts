@@ -267,27 +267,27 @@ describe("updateContactAction", () => {
   });
 });
 
-describe("setHouseAction — no Yes/No question; an explicit skip (both args omitted) is a complete answer", () => {
+describe("setHouseAction — the House step must be ANSWERED; an explicit skip is one of the valid answers", () => {
   beforeEach(() => {
     requireSessionMock.mockResolvedValue(SESSION);
   });
 
   it("uploading a screenshot without selecting a House is rejected server-side", async () => {
-    const result = await setHouseAction(undefined, "file_1");
+    const result = await setHouseAction({ houseSkipped: false, houseProofFileId: "file_1" });
 
     expect(result.error).toBeTruthy();
     expect(setHouseAssignmentMock).not.toHaveBeenCalled();
   });
 
   it("a House not in the org's configured list is rejected", async () => {
-    const result = await setHouseAction("Not A Real House", "file_1");
+    const result = await setHouseAction({ houseSkipped: false, house: "Not A Real House", houseProofFileId: "file_1" });
 
     expect(result.error).toBeTruthy();
     expect(setHouseAssignmentMock).not.toHaveBeenCalled();
   });
 
   it("a valid House and screenshot together succeed", async () => {
-    const result = await setHouseAction("House Turing", "file_1");
+    const result = await setHouseAction({ houseSkipped: false, house: "House Turing", houseProofFileId: "file_1" });
 
     expect(result.error).toBeNull();
     expect(setHouseAssignmentMock).toHaveBeenCalledWith(
@@ -299,17 +299,34 @@ describe("setHouseAction — no Yes/No question; an explicit skip (both args omi
     );
   });
 
-  it("the skip control (both arguments omitted) completes successfully and writes nothing — house stays null", async () => {
-    const result = await setHouseAction();
+  it("an EXPLICIT skip completes successfully and writes nothing — house stays null, getMissingFields re-asks", async () => {
+    const result = await setHouseAction({ houseSkipped: true });
 
     expect(result.error).toBeNull();
+    expect(setHouseAssignmentMock).not.toHaveBeenCalled();
+  });
+
+  // The regression this whole enforcement exists for: the step used to treat
+  // "no fields at all" as a skip, so any POST that simply omitted the House
+  // answer completed the step and left an ACTIVE account with a null House.
+  it("a POST that omits the House answer entirely is REJECTED, not silently treated as a skip", async () => {
+    const result = await setHouseAction({ houseSkipped: false });
+
+    expect(result.error).toBeTruthy();
+    expect(setHouseAssignmentMock).not.toHaveBeenCalled();
+  });
+
+  it("a POST with no houseSkipped flag at all is rejected — a missing answer is malformed, not a skip", async () => {
+    const result = await setHouseAction({} as Parameters<typeof setHouseAction>[0]);
+
+    expect(result.error).toBeTruthy();
     expect(setHouseAssignmentMock).not.toHaveBeenCalled();
   });
 
   it("returns a graceful sessionExpired state instead of throwing when there is no session", async () => {
     requireSessionMock.mockRejectedValue(new AppError("UNAUTHENTICATED", "You must be signed in"));
 
-    const result = await setHouseAction();
+    const result = await setHouseAction({ houseSkipped: true });
 
     expect(result.sessionExpired).toBe(true);
     expect(setHouseAssignmentMock).not.toHaveBeenCalled();
@@ -320,7 +337,7 @@ describe("setHouseAction — no Yes/No question; an explicit skip (both args omi
     // would mean trusting the session's (cacheable) role and would put a
     // second copy of the houseSelfVerifies rule here. It forwards, and the
     // repo enforces against the row it is about to write.
-    const result = await setHouseAction("House Turing");
+    const result = await setHouseAction({ houseSkipped: false, house: "House Turing" });
 
     expect(result.error).toBeNull();
     expect(setHouseAssignmentMock).toHaveBeenCalledWith(
@@ -337,7 +354,7 @@ describe("setHouseAction — no Yes/No question; an explicit skip (both args omi
       new AppError("VALIDATION_FAILED", "Upload your House test result."),
     );
 
-    const result = await setHouseAction("House Turing");
+    const result = await setHouseAction({ houseSkipped: false, house: "House Turing" });
 
     expect(result.error).toBe("Upload your House test result.");
   });

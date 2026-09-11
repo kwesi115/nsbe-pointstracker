@@ -34,6 +34,25 @@ function matchesTri(value: boolean, filter: TriState): boolean {
   return filter === "all" || (filter === "yes" ? value : !value);
 }
 
+/**
+ * House is not a yes/no — "verified", "self-reported and awaiting review" and
+ * "none on file at all" are three different situations, and the last one is
+ * the one an admin needs to be able to FIND. It used to collapse into "not
+ * verified" alongside every pending claim, which is why House-less accounts
+ * were only ever discovered by accident. The same three states the roster's
+ * House column already renders (see getMembersWithStats houseState).
+ */
+type HouseFilter = "all" | "verified" | "pending" | "missing";
+
+function asHouseFilter(value: string | undefined): HouseFilter {
+  // "yes" was the old spelling of this exact filter and still means it. Any
+  // other unrecognized value (including the old "no", which lumped pending
+  // and missing together and no longer maps onto one option) falls back to
+  // "all" rather than silently meaning something narrower than it used to.
+  if (value === "yes") return "verified";
+  return value === "verified" || value === "pending" || value === "missing" ? value : "all";
+}
+
 /** Server-side filtering (Part 5) — the full roster is already one query (getMembersWithStats); this just filters the already-fetched array per request, driven by MembersFilterBar's URL searchParams. */
 function filterMembers(members: MemberWithStats[], params: MembersSearchParams): MemberWithStats[] {
   const q = (params.q ?? "").trim().toLowerCase();
@@ -46,7 +65,7 @@ function filterMembers(members: MemberWithStats[], params: MembersSearchParams):
   const eligible = asTri(params.eligible);
   const dues = asTri(params.dues);
   const national = asTri(params.national);
-  const house = asTri(params.house);
+  const house = asHouseFilter(params.house);
   const resume = asTri(params.resume);
 
   return members
@@ -55,9 +74,13 @@ function filterMembers(members: MemberWithStats[], params: MembersSearchParams):
     .filter((m) => classification === "all" || m.classification === classification)
     .filter((m) => major === "all" || m.major === major)
     .filter((m) => matchesTri(m.eligible, eligible))
+    // Dues/National filter on the CLAIM, not on verification — "Reported"
+    // has always meant "the member said yes," which is also what drives
+    // leaderboard eligibility. The roster's glyph now says separately
+    // whether anyone checked it (see ClaimStatus).
     .filter((m) => matchesTri(m.duesPaidReported === true, dues))
     .filter((m) => matchesTri(m.nationalMemberReported === true, national))
-    .filter((m) => matchesTri(m.houseState === "verified", house))
+    .filter((m) => house === "all" || m.houseState === (house === "missing" ? "none" : house))
     .filter((m) => matchesTri(m.resumeFileId !== null, resume))
     .filter(
       (m) =>

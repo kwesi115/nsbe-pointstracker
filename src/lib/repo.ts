@@ -51,8 +51,10 @@ import type {
 } from "@/generated/prisma/models";
 import { verifyCode } from "./code";
 import { AppError } from "./errors";
+import { claimState, type ClaimState } from "./claim-state";
 import { CORE_FORM_VERSION, getMissingFields, houseSelfVerifies, validateCoreAnswers, validateReducedCoreAnswers } from "./core-form";
 import { validateAnswers, serializeAnswers } from "./forms";
+import { memberDisplayName } from "./format";
 import { parseHouses, type House } from "./houses";
 import { generateSetupCode, hashPassword, verifyPassword } from "./passwords";
 import { hashIp, isEventCodeLocked, recordEventCodeFailure } from "./rate-limit";
@@ -285,6 +287,7 @@ function userToMember(u: UserModel): Member {
     duesPaidReported: u.duesPaidReported,
     duesReportedAt: u.duesReportedAt,
     duesVerifiedAt: u.duesVerifiedAt,
+    duesVerifiedById: u.duesVerifiedById ?? "",
     duesRevokedAt: u.duesRevokedAt,
     duesRevokedById: u.duesRevokedById ?? "",
     duesRevokedNote: u.duesRevokedNote ?? "",
@@ -292,6 +295,7 @@ function userToMember(u: UserModel): Member {
     nationalMemberReported: u.nationalMemberReported,
     nsbeMembershipId: u.nsbeMembershipId ?? "",
     nationalVerifiedAt: u.nationalVerifiedAt,
+    nationalVerifiedById: u.nationalVerifiedById ?? "",
     nationalRevokedAt: u.nationalRevokedAt,
     nationalRevokedById: u.nationalRevokedById ?? "",
     nationalRevokedNote: u.nationalRevokedNote ?? "",
@@ -301,6 +305,7 @@ function userToMember(u: UserModel): Member {
 
     house: u.house ?? "",
     houseVerifiedAt: u.houseVerifiedAt,
+    houseVerifiedById: u.houseVerifiedById ?? "",
     houseProofFileId: u.houseProofFileId,
 
     resumeFileId: u.resumeFileId,
@@ -1235,9 +1240,48 @@ export interface MemberWithStats extends Member {
   events: number;
   accountState: AccountState;
   eligible: boolean;
+  /** Precomputed so the roster can't re-derive them off the raw flags and get it wrong — see lib/claim-state.ts. */
+  duesState: ClaimState;
+  nationalState: ClaimState;
+  /** Display name of whoever verified the claim, resolved from *VerifiedById. Empty when not verified, or when the id points at a row that no longer exists. */
+  duesVerifiedByName: string;
+  nationalVerifiedByName: string;
   houseState: "none" | "pending" | "verified";
   /** Most recent of: last attendance, last AdminLog entry touching this member. Null if neither exists. */
   lastActiveAt: Date | null;
+}
+
+/**
+ * Turns the *VerifiedById columns on one member into display names. The
+ * columns are plain nullable Strings with no foreign key (see the schema), so
+ * an id can point at a deleted row, or at the literal HOUSE_SYSTEM_VERIFIER
+ * sentinel — both resolve to "" and the caller renders the date alone rather
+ * than inventing a verifier. getMembersWithStats does the same resolution
+ * off the roster it already has in hand.
+ */
+export async function resolveVerifierNames(
+  orgId: string,
+  member: Pick<Member, "duesVerifiedById" | "nationalVerifiedById" | "houseVerifiedById">,
+): Promise<{ duesVerifiedByName: string; nationalVerifiedByName: string; houseVerifiedByName: string }> {
+  const ids = [member.duesVerifiedById, member.nationalVerifiedById, member.houseVerifiedById].filter(
+    (id): id is string => Boolean(id) && id !== HOUSE_SYSTEM_VERIFIER,
+  );
+  const rows =
+    ids.length === 0
+      ? []
+      : await prisma.user.findMany({
+          where: { orgId, id: { in: ids } },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        });
+  const byId = new Map(rows.map((r) => [r.id, memberDisplayName(r.firstName, r.lastName, r.email)]));
+  return {
+    duesVerifiedByName: byId.get(member.duesVerifiedById) ?? "",
+    nationalVerifiedByName: byId.get(member.nationalVerifiedById) ?? "",
+    houseVerifiedByName:
+      member.houseVerifiedById === HOUSE_SYSTEM_VERIFIER
+        ? "verified on selection"
+        : byId.get(member.houseVerifiedById) ?? "",
+  };
 }
 
 export async function getMembersWithStats(orgId: string): Promise<MemberWithStats[]> {
@@ -1268,6 +1312,11 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
     if (!lastLogByEmail.has(key) && entry.timestamp) lastLogByEmail.set(key, entry.timestamp);
   }
   const authByEmail = new Map(authRecords.map((a) => [a.email, a]));
+  // *VerifiedById holds a User id; the roster already has every member in
+  // hand, so resolving it to a name is a local lookup rather than another
+  // query. HOUSE_SYSTEM_VERIFIER and a since-deleted admin both fall through
+  // to "" — the caller renders the date alone rather than inventing a name.
+  const nameById = new Map(members.map((m) => [m.id, memberDisplayName(m.firstName, m.lastName, m.email)]));
 
   return Promise.all(
     members.map(async (m) => {
@@ -1288,6 +1337,10 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
         events: totals?.events ?? 0,
         accountState,
         eligible: isEligible(m, currentSeason),
+        duesState: claimState(m.duesPaidReported, m.duesVerifiedAt, m.duesRevokedAt),
+        nationalState: claimState(m.nationalMemberReported, m.nationalVerifiedAt, m.nationalRevokedAt),
+        duesVerifiedByName: nameById.get(m.duesVerifiedById) ?? "",
+        nationalVerifiedByName: nameById.get(m.nationalVerifiedById) ?? "",
         houseState,
         lastActiveAt,
       };
@@ -1301,9 +1354,26 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
 // mutation (see logAdminAction).
 // ---------------------------------------------------------------------------
 
+/**
+ * The three queue queries below deliberately filter on NOTHING but the claim
+ * state itself (see lib/claim-state.ts — this WHERE is the SQL spelling of
+ * `claimState(...) === "pending"`).
+ *
+ * In particular there is no role filter. These used to carry
+ * `role: GENERAL`, which silently hid every E-Board claim from the audit
+ * queue — 31 of 34 outstanding dues claims on the Howard roster, because an
+ * officer pays chapter dues and holds a national membership like anyone
+ * else. A claim is audited on its state, never on who made it.
+ *
+ * `*RevokedAt: null` is the other half of "pending": a revoked claim has
+ * already been adjudicated and does not belong in a queue of undecided ones.
+ * Re-reporting clears the revoke stamps (see setDuesReported), so a member
+ * who claims again after a revoke comes back here as a new pending claim
+ * rather than disappearing behind a stale decision.
+ */
 export async function getDuesPendingMembers(orgId: string): Promise<Member[]> {
   const rows = await prisma.user.findMany({
-    where: { orgId, duesPaidReported: true, duesVerifiedAt: null, role: DbRole.GENERAL },
+    where: { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null },
     orderBy: { duesReportedAt: "asc" },
   });
   return rows.map(userToMember);
@@ -1311,7 +1381,7 @@ export async function getDuesPendingMembers(orgId: string): Promise<Member[]> {
 
 export async function getNationalPendingMembers(orgId: string): Promise<Member[]> {
   const rows = await prisma.user.findMany({
-    where: { orgId, nationalMemberReported: true, nationalVerifiedAt: null, role: DbRole.GENERAL },
+    where: { orgId, nationalMemberReported: true, nationalVerifiedAt: null, nationalRevokedAt: null },
     orderBy: { createdAt: "asc" },
   });
   return rows.map(userToMember);
@@ -1319,19 +1389,49 @@ export async function getNationalPendingMembers(orgId: string): Promise<Member[]
 
 export async function getHousePendingMembers(orgId: string): Promise<Member[]> {
   const rows = await prisma.user.findMany({
-    where: { orgId, house: { not: null }, houseVerifiedAt: null, role: DbRole.GENERAL },
+    where: { orgId, house: { not: null }, houseVerifiedAt: null },
     orderBy: { createdAt: "asc" },
   });
   return rows.map(userToMember);
 }
 
-/** Verify/Revoke are pure audit now — neither gates the leaderboard (see lib/points.ts isEligible). Mutually exclusive: verifying clears a past revoke, and vice versa. */
+/** Accounts with no House on file at all — the state getMissingFields re-asks for, surfaced so an admin can find them instead of discovering one by accident. ADMIN accounts are excluded: they never get a House step (see joinWizardRules.ts stepsFor) and getMissingFields never asks them for one, so listing them here would be noise, not a gap. */
+export async function getHouseMissingMembers(orgId: string): Promise<Member[]> {
+  const rows = await prisma.user.findMany({
+    where: { orgId, house: null, role: { not: DbRole.ADMIN } },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(userToMember);
+}
+
+/**
+ * Resolves the acting admin's User id for a *VerifiedById/*RevokedById
+ * column. Every verify below records one: a verified claim with no verifier
+ * on it is unauditable — "verified by whom?" has no answer — and the repair
+ * script (scripts/repair-claim-state.ts) can only report such a row, never
+ * reconstruct it.
+ */
+async function actorUserId(tx: Tx, orgId: string, actor: string): Promise<string | null> {
+  const row = await tx.user.findUnique({
+    where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+/** Verify/Revoke are pure audit now — neither gates the leaderboard (see lib/points.ts isEligible). Mutually exclusive: verifying clears a past revoke, and vice versa — that invariant is what lets lib/claim-state.ts claimState resolve a row to exactly one of four states. */
 export async function verifyDues(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
-      data: { duesVerifiedAt: new Date(), duesRevokedAt: null, duesRevokedById: null, duesRevokedNote: null },
+      data: {
+        duesVerifiedAt: new Date(),
+        duesVerifiedById: await actorUserId(tx, orgId, actor),
+        duesRevokedAt: null,
+        duesRevokedById: null,
+        duesRevokedNote: null,
+      },
     });
     await logAdminAction(tx, orgId, { actor, action: "verify_dues", target: e });
   });
@@ -1341,17 +1441,14 @@ export async function verifyDues(orgId: string, email: string, actor: string): P
 export async function revokeDues(orgId: string, email: string, actor: string, note: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
-      select: { id: true },
-    });
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
       data: {
         duesPaidReported: false,
         duesVerifiedAt: null,
+        duesVerifiedById: null,
         duesRevokedAt: new Date(),
-        duesRevokedById: actorUser?.id ?? null,
+        duesRevokedById: await actorUserId(tx, orgId, actor),
         duesRevokedNote: note,
       },
     });
@@ -1368,6 +1465,7 @@ export async function verifyNational(orgId: string, email: string, actor: string
       where: { orgId_email: { orgId, email: e } },
       data: {
         nationalVerifiedAt: new Date(),
+        nationalVerifiedById: await actorUserId(tx, orgId, actor),
         nationalRevokedAt: null,
         nationalRevokedById: null,
         nationalRevokedNote: null,
@@ -1380,17 +1478,14 @@ export async function verifyNational(orgId: string, email: string, actor: string
 export async function revokeNational(orgId: string, email: string, actor: string, note: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    const actorUser = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
-      select: { id: true },
-    });
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
       data: {
         nationalMemberReported: false,
         nationalVerifiedAt: null,
+        nationalVerifiedById: null,
         nationalRevokedAt: new Date(),
-        nationalRevokedById: actorUser?.id ?? null,
+        nationalRevokedById: await actorUserId(tx, orgId, actor),
         nationalRevokedNote: note,
       },
     });
@@ -1403,7 +1498,10 @@ export async function revokeNational(orgId: string, email: string, actor: string
 export async function verifyHouse(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { houseVerifiedAt: new Date() } });
+    await tx.user.update({
+      where: { orgId_email: { orgId, email: e } },
+      data: { houseVerifiedAt: new Date(), houseVerifiedById: await actorUserId(tx, orgId, actor) },
+    });
     await logAdminAction(tx, orgId, { actor, action: "verify_house", target: e });
   });
 }
@@ -1413,7 +1511,7 @@ export async function rejectHouse(orgId: string, email: string, actor: string, n
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { orgId_email: { orgId, email: e } },
-      data: { house: null, houseVerifiedAt: null, houseProofFileId: null },
+      data: { house: null, houseVerifiedAt: null, houseVerifiedById: null, houseProofFileId: null },
     });
     await logAdminAction(tx, orgId, { actor, action: "reject_house", target: e, detail: note });
   });
@@ -1423,7 +1521,10 @@ export async function rejectHouse(orgId: string, email: string, actor: string, n
 export async function correctHouse(orgId: string, email: string, house: string, note: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { house, houseVerifiedAt: new Date() } });
+    await tx.user.update({
+      where: { orgId_email: { orgId, email: e } },
+      data: { house, houseVerifiedAt: new Date(), houseVerifiedById: await actorUserId(tx, orgId, actor) },
+    });
     await logAdminAction(tx, orgId, { actor, action: "correct_house", target: e, detail: `${house} — ${note}` });
   });
 }
@@ -1449,6 +1550,14 @@ export async function setDuesReported(orgId: string, email: string, reported: bo
         duesPaidReported: reported,
         duesReportedAt: new Date(),
         ...(season !== null ? { membershipSeason: season } : {}),
+        // A fresh "yes" is a NEW claim, so it clears a previous revoke —
+        // the old decision was about the old claim. Without this the row
+        // keeps duesRevokedAt set while duesPaidReported is true again:
+        // claimState resolves it to "revoked", the audit queue (pending
+        // only) never shows it, and the member sits on the leaderboard
+        // with a claim no admin can ever reach. Revoking again is one
+        // click; a permanently invisible claim is not recoverable.
+        ...(reported ? { duesRevokedAt: null, duesRevokedById: null, duesRevokedNote: null } : {}),
       },
     });
     await logAdminAction(tx, orgId, { actor, action: "report_dues", target: e, detail: String(reported) });
@@ -1474,6 +1583,8 @@ export async function setNationalReported(
       data: {
         nationalMemberReported: reported,
         ...(season !== null ? { membershipSeason: season } : {}),
+        // Same "a new claim supersedes the old decision" rule as setDuesReported.
+        ...(reported ? { nationalRevokedAt: null, nationalRevokedById: null, nationalRevokedNote: null } : {}),
         // Written whenever one was supplied, whatever `reported` says, and
         // never cleared as a side effect of answering No — the ID is an
         // independent field (a prior year's, or one still pending).
@@ -2534,8 +2645,27 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
               // actually asked (Part 2's persistent re-ask) — omit the key
               // entirely otherwise so the existing DB value (already true)
               // is left untouched.
-              ...(!duesAlreadyReported ? { duesPaidReported: fullCore.duesPaid, duesReportedAt: now } : {}),
-              ...(!nationalAlreadyReported ? { nationalMemberReported: fullCore.nationalMember } : {}),
+              // A "yes" here clears a previous revoke for the same reason
+              // setDuesReported does: it is a new claim, and leaving the
+              // stale revoke stamp on the row would hide it from the audit
+              // queue forever (see lib/claim-state.ts).
+              ...(!duesAlreadyReported
+                ? {
+                    duesPaidReported: fullCore.duesPaid,
+                    duesReportedAt: now,
+                    ...(fullCore.duesPaid === true
+                      ? { duesRevokedAt: null, duesRevokedById: null, duesRevokedNote: null }
+                      : {}),
+                  }
+                : {}),
+              ...(!nationalAlreadyReported
+                ? {
+                    nationalMemberReported: fullCore.nationalMember,
+                    ...(fullCore.nationalMember === true
+                      ? { nationalRevokedAt: null, nationalRevokedById: null, nationalRevokedNote: null }
+                      : {}),
+                  }
+                : {}),
               // Independent of the national answer in both directions: the
               // ID is written whenever the form submitted one (blank means
               // the member cleared it), and answering No never wipes it.

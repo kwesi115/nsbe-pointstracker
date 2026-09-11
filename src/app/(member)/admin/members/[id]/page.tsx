@@ -11,7 +11,7 @@ import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { normalizeEmail } from "@/lib/email";
 import { formatDate, formatDateTime, memberDisplayName } from "@/lib/format";
 import { attendanceRate, isEligible, longestAttendanceStreak } from "@/lib/points";
-import { getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory } from "@/lib/repo";
+import { getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory, resolveVerifierNames } from "@/lib/repo";
 import { requireAdminForbidden } from "@/lib/session";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,13 +24,14 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(orgId, id);
   if (!member) notFound();
 
-  const [history, events, adminLog, season, coreFormConfig, permissions] = await Promise.all([
+  const [history, events, adminLog, season, coreFormConfig, permissions, verifiers] = await Promise.all([
     getMemberHistory(orgId, member.email),
     getEvents(orgId),
     getAdminLog(orgId),
     getConfigValue(orgId, "SEASON", ""),
     getCoreFormConfig(orgId),
     getActivePermissions(orgId, member.email),
+    resolveVerifierNames(orgId, member),
   ]);
 
   const eventById = new Map(events.map((e) => [e.eventId, e]));
@@ -94,7 +95,10 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Membership</h2>
-        <AdminMembershipPanel member={member} season={season} />
+        <AdminMembershipPanel
+          member={{ ...member, duesVerifiedByName: verifiers.duesVerifiedByName, nationalVerifiedByName: verifiers.nationalVerifiedByName }}
+          season={season}
+        />
       </section>
 
       <section className="flex flex-col gap-3">

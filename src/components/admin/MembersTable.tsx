@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Clock, X } from "lucide-react";
+import { Check, Clock, Hand, X } from "lucide-react";
 import { useState, useTransition } from "react";
 import {
   bulkSetRoleAction,
@@ -23,31 +23,60 @@ import HouseCell from "./HouseCell";
 import ResetPasswordButton from "./ResetPasswordButton";
 import RoleSelect from "./RoleSelect";
 import StatusIcon from "@/components/StatusIcon";
+import ClaimStatus from "@/components/ClaimStatus";
 import StatusBadge from "./StatusBadge";
 
 const stickyNameClass = "sticky left-0 z-10 bg-surface";
 
-/** Above the roster so a sighted user and a screen reader agree on what each glyph means. */
+/**
+ * Above the roster so a sighted user and a screen reader agree on what each
+ * glyph means. Split in two on purpose: the Dues and National columns are
+ * CLAIMS with four states (what the member said vs. what an admin checked),
+ * and the old single legend line — "Yes / verified" against one check mark —
+ * is the sentence that made a self-report look like an audited fact.
+ */
 function StatusLegend() {
   return (
-    <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
-      <li className="flex items-center gap-1.5">
-        <Check size={14} className="text-signal" aria-hidden="true" />
-        Yes / verified
-      </li>
-      <li className="flex items-center gap-1.5">
-        <X size={14} className="text-muted" aria-hidden="true" />
-        No / not met
-      </li>
-      <li className="flex items-center gap-1.5">
-        <Clock size={14} className="text-[#7a4d00]" aria-hidden="true" />
-        Pending
-      </li>
-      <li className="flex items-center gap-1.5">
-        <span aria-hidden="true">—</span>
-        Not provided
-      </li>
-    </ul>
+    <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
+      <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <li className="font-semibold text-ink">Dues &amp; National</li>
+        <li className="flex items-center gap-1.5">
+          <Hand size={14} className="text-[#7a4d00]" aria-hidden="true" />
+          Self-reported, not yet verified
+        </li>
+        <li className="flex items-center gap-1.5">
+          <Check size={14} className="text-signal" aria-hidden="true" />
+          Verified by an admin
+        </li>
+        <li className="flex items-center gap-1.5">
+          <X size={14} className="text-alert" aria-hidden="true" />
+          Revoked
+        </li>
+        <li className="flex items-center gap-1.5">
+          <span aria-hidden="true">—</span>
+          Not reported
+        </li>
+      </ul>
+      <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <li className="font-semibold text-ink">Eligible, House &amp; Resume</li>
+        <li className="flex items-center gap-1.5">
+          <Check size={14} className="text-signal" aria-hidden="true" />
+          Yes
+        </li>
+        <li className="flex items-center gap-1.5">
+          <X size={14} className="text-muted" aria-hidden="true" />
+          No
+        </li>
+        <li className="flex items-center gap-1.5">
+          <Clock size={14} className="text-[#7a4d00]" aria-hidden="true" />
+          Pending
+        </li>
+        <li className="flex items-center gap-1.5">
+          <span aria-hidden="true">—</span>
+          Not provided
+        </li>
+      </ul>
+    </div>
   );
 }
 
@@ -196,12 +225,21 @@ export default function MembersTable({ members, houses }: { members: MemberWithS
                     <StatusIcon value={m.eligible} labels={{ yes: "Eligible", no: "Ineligible" }} />
                   </td>
                   <td className={tdClass}>
-                    <StatusIcon value={m.duesPaidReported} labels={{ yes: "Dues reported", no: "Dues not reported", pending: "Dues not yet reported" }} />
+                    <ClaimStatus
+                      claimLabel="Dues"
+                      state={m.duesState}
+                      verifiedAt={m.duesVerifiedAt}
+                      verifiedByName={m.duesVerifiedByName}
+                      revokedNote={m.duesRevokedNote}
+                    />
                   </td>
                   <td className={tdClass}>
-                    <StatusIcon
-                      value={m.nationalMemberReported}
-                      labels={{ yes: "National membership reported", no: "National membership not reported", pending: "National membership not yet reported" }}
+                    <ClaimStatus
+                      claimLabel="National membership"
+                      state={m.nationalState}
+                      verifiedAt={m.nationalVerifiedAt}
+                      verifiedByName={m.nationalVerifiedByName}
+                      revokedNote={m.nationalRevokedNote}
                     />
                   </td>
                   <td className={tdClass}>
