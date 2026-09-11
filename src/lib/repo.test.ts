@@ -152,6 +152,9 @@ function validCore(overrides: Partial<CoreFormAnswers> = {}): CoreFormAnswers {
     studentId: "1234567",
     phone: "555-0100",
     personalEmail: "test-user@example.com",
+    // Required since CORE_FORM_VERSION 3 — getMissingFields asks any member
+    // with no size on file, so a valid submission now carries one.
+    tshirtSize: "M",
     classification: "freshman",
     major: "Other",
     majorOther: "Undeclared",
@@ -604,7 +607,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
   it("an EBOARD member with a pending dues claim appears in the queue", async () => {
     const officer = await makeUser({ role: Role.EBOARD, duesPaidReported: true, duesVerifiedAt: null });
 
-    const pending = await getDuesPendingMembers(orgId);
+    const pending = (await getDuesPendingMembers(orgId)).members;
 
     expect(pending.map((m) => m.email)).toContain(officer.email);
   });
@@ -612,7 +615,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
   it("an EBOARD member with a pending national claim appears in the queue", async () => {
     const officer = await makeUser({ role: Role.EBOARD, nationalMemberReported: true, nationalVerifiedAt: null });
 
-    const pending = await getNationalPendingMembers(orgId);
+    const pending = (await getNationalPendingMembers(orgId)).members;
 
     expect(pending.map((m) => m.email)).toContain(officer.email);
   });
@@ -624,7 +627,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
       ),
     );
 
-    const emails = (await getDuesPendingMembers(orgId)).map((m) => m.email);
+    const emails = (await getDuesPendingMembers(orgId)).members.map((m) => m.email);
 
     for (const u of users) expect(emails).toContain(u.email);
   });
@@ -638,7 +641,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
     await makeUser({ role: Role.GENERAL, duesPaidReported: true, duesVerifiedAt: new Date() });
     await makeUser({ role: Role.GENERAL, duesPaidReported: false, duesVerifiedAt: null });
 
-    const queue = await getDuesPendingMembers(orgId);
+    const queue = (await getDuesPendingMembers(orgId)).members;
     const direct = await prisma.user.count({
       where: { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null },
     });
@@ -649,11 +652,11 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
   it("verifying a claim moves it out of the queue and records WHO verified it", async () => {
     const actor = await makeUser({ role: Role.ADMIN });
     const user = await makeUser({ duesPaidReported: true, duesVerifiedAt: null });
-    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).toContain(user.email);
+    expect((await getDuesPendingMembers(orgId)).members.map((m) => m.email)).toContain(user.email);
 
     await verifyDues(orgId, user.email, actor.email);
 
-    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).not.toContain(user.email);
+    expect((await getDuesPendingMembers(orgId)).members.map((m) => m.email)).not.toContain(user.email);
     const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(row.duesVerifiedAt).not.toBeNull();
     // A verified claim with no verifier on it is unauditable — "verified by
@@ -688,7 +691,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
 
     await revokeDues(orgId, user.email, actor.email, "No record of payment");
 
-    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).not.toContain(user.email);
+    expect((await getDuesPendingMembers(orgId)).members.map((m) => m.email)).not.toContain(user.email);
   });
 
   /**
@@ -709,7 +712,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
     expect(row.duesPaidReported).toBe(true);
     expect(row.duesRevokedAt).toBeNull();
     expect(row.duesRevokedNote).toBeNull();
-    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).toContain(user.email);
+    expect((await getDuesPendingMembers(orgId)).members.map((m) => m.email)).toContain(user.email);
   });
 
   it("a check-in that re-reports dues after a revoke clears the stamp too — same rule, second write site", async () => {
@@ -729,7 +732,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
     const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(row.duesPaidReported).toBe(true);
     expect(row.duesRevokedAt).toBeNull();
-    expect((await getDuesPendingMembers(orgId)).map((m) => m.email)).toContain(user.email);
+    expect((await getDuesPendingMembers(orgId)).members.map((m) => m.email)).toContain(user.email);
   });
 
   it("getHouseMissingMembers finds accounts with no House, and excludes ADMINs (who are never asked for one)", async () => {
@@ -739,7 +742,7 @@ describe("Membership Audit queue — every pending claim, whatever the role", ()
     const withHouse = await makeUser({ role: Role.GENERAL });
     await setHouseAssignment(orgId, withHouse.email, "House Turing", "file_1", withHouse.email);
 
-    const emails = (await getHouseMissingMembers(orgId)).map((m) => m.email);
+    const emails = (await getHouseMissingMembers(orgId)).members.map((m) => m.email);
 
     expect(emails).toContain(member.email);
     expect(emails).toContain(officer.email);
@@ -1079,7 +1082,7 @@ describe("E-Board House — verified on selection, no screenshot", () => {
     await setHouseAssignment(orgId, member.email, "House Turing", "file_1", member.email);
     await setHouseAssignment(orgId, officer.email, "House Hamilton", undefined, officer.email);
 
-    const pending = await getHousePendingMembers(orgId);
+    const pending = (await getHousePendingMembers(orgId)).members;
     const emails = pending.map((m) => m.email);
     expect(emails).toContain(member.email);
     expect(emails).not.toContain(officer.email);
@@ -1110,7 +1113,7 @@ describe("E-Board House — verified on selection, no screenshot", () => {
     expect(row.houseVerifiedAt).toBeNull();
     expect(row.houseProofFileId).toBe("file_1");
     // ...but they've left the queue, which only ever lists GENERAL members.
-    const pending = await getHousePendingMembers(orgId);
+    const pending = (await getHousePendingMembers(orgId)).members;
     expect(pending.map((m) => m.email)).not.toContain(member.email);
   });
 });

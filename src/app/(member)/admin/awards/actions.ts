@@ -26,8 +26,10 @@ export async function createManualAwardAction(_prevState: AwardActionState, form
   return { error: null };
 }
 
-export async function revokeAwardAction(id: string, note: string): Promise<{ error: string | null }> {
+export async function revokeAwardAction(_prev: AwardActionState, formData: FormData): Promise<AwardActionState> {
   const session = await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const note = String(formData.get("reason") ?? "");
   if (!note.trim()) return { error: "A note is required to revoke an award." };
   try {
     await revokePointAward(session.user.orgId, id, session.user.email, note);

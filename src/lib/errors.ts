@@ -12,7 +12,12 @@ export type ErrorCode =
   | "TOO_MANY_ATTEMPTS"
   | "ACCOUNT_NOT_ACTIVE"
   | "BAD_CODE"
-  | "LAST_ADMIN";
+  | "LAST_ADMIN"
+  // A submission that repeats one already applied — same requestToken (see
+  // prisma/schema.prisma model RequestClaim). Not a failure of the caller's
+  // intent: the first request did the work, and this one deliberately did
+  // nothing rather than issue a second credential.
+  | "DUPLICATE_REQUEST";
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,
@@ -27,6 +32,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   ACCOUNT_NOT_ACTIVE: 403,
   BAD_CODE: 403,
   LAST_ADMIN: 409,
+  DUPLICATE_REQUEST: 409,
 };
 
 export interface AppErrorOptions {

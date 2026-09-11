@@ -85,8 +85,9 @@ export async function toggleEventInGroupAction(
   return { error: null };
 }
 
-export async function finalizeGroupAction(groupId: string): Promise<{ error: string | null }> {
+export async function finalizeGroupAction(_prev: GroupActionState, formData: FormData): Promise<GroupActionState> {
   const session = await requireAdmin();
+  const groupId = String(formData.get("groupId") ?? "");
   try {
     await finalizeEventGroup(session.user.orgId, groupId, session.user.email);
   } catch (err) {

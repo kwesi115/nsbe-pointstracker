@@ -11,6 +11,7 @@ type PanelMember = Pick<
   | "studentId"
   | "phone"
   | "personalEmail"
+  | "tshirtSize"
   | "classification"
   | "major"
   | "majorOther"
@@ -30,6 +31,7 @@ const FIELD_LOCATION: Partial<Record<CoreFieldKey, { anchor: string; label: stri
   studentId: { anchor: "#profile", label: "Student ID" },
   phone: { anchor: "#profile", label: "Phone" },
   personalEmail: { anchor: "#profile", label: "Personal email" },
+  tshirtSize: { anchor: "#profile", label: "T-shirt size" },
   classification: { anchor: "#profile", label: "Classification" },
   major: { anchor: "#profile", label: "Major" },
   majorOther: { anchor: "#profile", label: "Major" },

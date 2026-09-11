@@ -1,36 +1,20 @@
 "use client";
 
-import { useTransition } from "react";
-import { approveAction, rejectAction } from "@/app/(member)/admin/verifications/actions";
+import { approveAction, rejectAction, type VerificationActionState } from "@/app/(member)/admin/verifications/actions";
 import HouseCell from "@/components/admin/HouseCell";
+import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
-import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import type { House } from "@/lib/houses";
 import type { MemberWithStats } from "@/lib/repo";
 
 type HouseMember = Pick<MemberWithStats, "email" | "house" | "houseState" | "houseProofFileId" | "firstName" | "lastName">;
 
+const INITIAL_STATE: VerificationActionState = { error: null };
+
 /** Current House, verification state, the uploaded screenshot inline, and the admin correction control (HouseCell — the only path to changing a verified House). */
 export default function AdminHousePanel({ member, houses }: { member: HouseMember; houses: House[] }) {
-  const [isPending, startTransition] = useTransition();
   const { show } = useToast();
-
-  function verify() {
-    startTransition(async () => {
-      const result = await approveAction("house", member.email);
-      if (result.error) show(result.error, "error");
-      else show("House verified");
-    });
-  }
-
-  function reject() {
-    startTransition(async () => {
-      const result = await rejectAction(member.email);
-      if (result.error) show(result.error, "error");
-      else show("House rejected");
-    });
-  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -46,12 +30,23 @@ export default function AdminHousePanel({ member, houses }: { member: HouseMembe
         </div>
         {member.houseState === "pending" ? (
           <div className="flex gap-2">
-            <Button type="button" variant="secondary" onClick={reject} disabled={isPending}>
-              Reject
-            </Button>
-            <Button type="button" onClick={verify} disabled={isPending}>
-              Verify
-            </Button>
+            <ActionButton<VerificationActionState>
+              action={rejectAction}
+              initialState={INITIAL_STATE}
+              payload={{ email: member.email }}
+              label="Reject"
+              variant="secondary"
+              onSuccess={() => show("House rejected")}
+              onError={(message) => show(message, "error")}
+            />
+            <ActionButton<VerificationActionState>
+              action={approveAction}
+              initialState={INITIAL_STATE}
+              payload={{ tab: "house", email: member.email }}
+              label="Verify"
+              onSuccess={() => show("House verified")}
+              onError={(message) => show(message, "error")}
+            />
           </div>
         ) : null}
       </div>

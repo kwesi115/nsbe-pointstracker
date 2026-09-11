@@ -39,6 +39,7 @@ export default function CheckInFlow({
     | "studentId"
     | "phone"
     | "personalEmail"
+    | "tshirtSize"
     | "classification"
     | "major"
     | "majorOther"

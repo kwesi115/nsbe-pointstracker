@@ -15,7 +15,8 @@ import { useToast } from "@/components/ui/Toast";
 import { EmptyValue } from "@/components/StatusIcon";
 import { formatDateTime, memberDisplayName } from "@/lib/format";
 import type { House } from "@/lib/houses";
-import type { MemberWithStats } from "@/lib/repo";
+import type { MemberFilters, MembersPage, MemberWithStats } from "@/lib/repo";
+import { loadMembersPageAction } from "@/app/(member)/admin/members/pagination-actions";
 import AccountStateBadge from "./AccountStateBadge";
 import ApproveRejectButtons from "./ApproveRejectButtons";
 import EboardPositionCell from "./EboardPositionCell";
@@ -81,18 +82,48 @@ function StatusLegend() {
 }
 
 export default function MembersTable({
-  members,
+  initialPage,
+  total,
+  filters,
   houses,
   exportsEnabled,
 }: {
-  members: MemberWithStats[];
+  /** The first page, server-rendered. Subsequent pages are fetched, never preloaded and hidden. */
+  initialPage: MembersPage;
+  /** Every member matching `filters`, from an aggregate query — the "of 213". */
+  total: number;
+  /** Echoed back to the server with each "Show more" so page two is page two of THIS search, across the whole roster. */
+  filters: MemberFilters;
   houses: House[];
   /** Config.EXPORTS_ENABLED — hides "Export selected", whose endpoint is gated by the same flag. See lib/features.ts. */
   exportsEnabled: boolean;
 }) {
+  const [members, setMembers] = useState<MemberWithStats[]>(initialPage.rows);
+  const [cursor, setCursor] = useState<string | null>(initialPage.nextCursor);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
+  const [loadingMore, startLoadMore] = useTransition();
   const { show } = useToast();
+
+  // A filter or search change re-renders the server component with a fresh
+  // first page — adopt it during render rather than in an effect, so the list
+  // never briefly shows the previous filter's rows.
+  const [seed, setSeed] = useState(initialPage);
+  if (seed !== initialPage) {
+    setSeed(initialPage);
+    setMembers(initialPage.rows);
+    setCursor(initialPage.nextCursor);
+    setSelected(new Set());
+  }
+
+  function showMore() {
+    startLoadMore(async () => {
+      const { page } = await loadMembersPageAction(filters, cursor);
+      if (!page) return;
+      setMembers((prev) => [...prev, ...page.rows]);
+      setCursor(page.nextCursor);
+    });
+  }
 
   function toggle(email: string) {
     setSelected((prev) => {
@@ -196,6 +227,7 @@ export default function MembersTable({
             <th className={`${thClass} min-w-[210px]`}>Email</th>
             <th className={`${thClass} min-w-[130px]`}>Classification</th>
             <th className={`${thClass} min-w-[140px]`}>Major</th>
+            <th className={`${thClass} min-w-[90px]`}>T-shirt</th>
             <th className={`${thClass} min-w-[110px]`}>NSBE ID</th>
             <th className={`${thClass} min-w-[80px]`}>Points</th>
             <th className={`${thClass} min-w-[80px]`}>Events</th>
@@ -233,6 +265,7 @@ export default function MembersTable({
                   <td className={tdClass}>{m.email}</td>
                   <td className={tdClass}>{m.classification || <EmptyValue />}</td>
                   <td className={tdClass}>{m.major || <EmptyValue />}</td>
+                  <td className={tdClass}>{m.tshirtSize || <EmptyValue />}</td>
                   <td className={tdClass}>{m.nsbeMembershipId || <EmptyValue />}</td>
                   <td className={`${tdClass} numeric`}>{m.points}</td>
                   <td className={`${tdClass} numeric`}>{m.events}</td>
@@ -293,6 +326,18 @@ export default function MembersTable({
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center gap-3">
+        {/* Gone once every matching row has been loaded. */}
+        {cursor ? (
+          <Button type="button" variant="secondary" onClick={showMore} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Show more"}
+          </Button>
+        ) : null}
+        <p className="numeric text-sm text-muted">
+          Showing {members.length} of {total} member{total === 1 ? "" : "s"}
+        </p>
       </div>
     </div>
   );

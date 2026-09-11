@@ -92,6 +92,10 @@ enum ShirtSize {
 // re-read — so a revoke takes effect on the very next request.
 enum Permission {
   VERIFICATIONS_WRITE
+  // Held outright only by ADMIN (see lib/access.ts PERMISSION_ROLES) — an
+  // E-Board officer reads attendance but needs this granted explicitly to
+  // add, remove, or re-point a registration, because all three award points.
+  ATTENDANCE_WRITE
 }
 
 // A chapter. One row for launch ("howard-nsbe"); everything org-scoped below
@@ -116,6 +120,7 @@ model Org {
   uploadedFiles    UploadedFile[]
   joinCodes        JoinCode[]
   permissionGrants PermissionGrant[]
+  requestClaims    RequestClaim[]
 }
 
 // The sole signup security boundary (see lib/joincodes.ts): role is whatever
@@ -493,6 +498,35 @@ model PermissionGrant {
 
   @@unique([orgId, userId, permission])
   @@index([orgId, permission])
+}
+
+// One-shot claim ticket for an action that must not run twice.
+//
+// The client sends a requestToken with every confirm-dialog submission (see
+// components/ui/ConfirmDialog.tsx, which mints one per opening). An action that
+// generates a credential — resetPassword, rotateJoinCodeById — inserts that
+// token in the SAME transaction as its work, so the unique index below is what
+// actually makes a double-submit impossible: the second transaction blocks on
+// the index, then fails, and its work rolls back with it. A disabled button is
+// a UX affordance; this is the guarantee.
+//
+// Rows are keepable history (they say a reset was requested and collapsed) but
+// nothing reads them back, so they are safe to prune by createdAt if the table
+// ever grows — the volume is one row per admin credential operation.
+model RequestClaim {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id])
+  /** The action being guarded, e.g. "reset_password". */
+  scope     String
+  /** Client-generated, unique per confirm-dialog opening. */
+  token     String
+  /** What the action acted on, for reading the table later. Never part of the key. */
+  target    String?
+  createdAt DateTime @default(now())
+
+  @@unique([orgId, scope, token])
+  @@index([createdAt])
 }
 
 model AdminLog {

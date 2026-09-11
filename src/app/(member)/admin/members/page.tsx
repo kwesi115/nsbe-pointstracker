@@ -1,14 +1,20 @@
-import { guardAdminPage } from "@/lib/access-guards";
 import AccessDenied from "../_components/AccessDenied";
 import AddMemberForm from "@/components/admin/AddMemberForm";
 import AdminNav from "@/components/admin/AdminNav";
 import MemberImport from "@/components/admin/MemberImport";
 import MembersFilterBar from "@/components/admin/MembersFilterBar";
 import MembersTable from "@/components/admin/MembersTable";
-import { getCoreFormConfig, getMembersWithStats, type MemberWithStats } from "@/lib/repo";
-import type { Classification, Role, UserStatus } from "@/lib/types";
-
-type TriState = "all" | "yes" | "no";
+import { guardAdminPage } from "@/lib/access-guards";
+import { SHIRT_SIZE_OPTIONS } from "@/lib/core-form";
+import {
+  getCoreFormConfig,
+  getMemberAggregates,
+  getMembersPage,
+  type MemberFilters,
+  type MemberHouseFilter,
+  type MemberTriFilter,
+} from "@/lib/repo";
+import type { Classification, Role, ShirtSize, UserStatus } from "@/lib/types";
 
 interface MembersSearchParams {
   q?: string;
@@ -21,74 +27,54 @@ interface MembersSearchParams {
   resume?: string;
   classification?: string;
   major?: string;
+  tshirt?: string;
 }
 
 const VALID_ROLES: Role[] = ["general", "eboard", "admin", "guest"];
 const VALID_STATUSES: UserStatus[] = ["pending", "active", "suspended"];
 const VALID_CLASSIFICATIONS: Classification[] = ["freshman", "sophomore", "junior", "senior", "graduate"];
 
-function asTri(value: string | undefined): TriState {
+function asTri(value: string | undefined): MemberTriFilter {
   return value === "yes" || value === "no" ? value : "all";
-}
-
-function matchesTri(value: boolean, filter: TriState): boolean {
-  return filter === "all" || (filter === "yes" ? value : !value);
 }
 
 /**
  * House is not a yes/no — "verified", "self-reported and awaiting review" and
  * "none on file at all" are three different situations, and the last one is
- * the one an admin needs to be able to FIND. It used to collapse into "not
- * verified" alongside every pending claim, which is why House-less accounts
- * were only ever discovered by accident. The same three states the roster's
- * House column already renders (see getMembersWithStats houseState).
+ * the one an admin needs to be able to FIND. "yes" was the old spelling of
+ * "verified" and still means it; anything else unrecognized falls back to
+ * "all" rather than silently meaning something narrower than it used to.
  */
-type HouseFilter = "all" | "verified" | "pending" | "missing";
-
-function asHouseFilter(value: string | undefined): HouseFilter {
-  // "yes" was the old spelling of this exact filter and still means it. Any
-  // other unrecognized value (including the old "no", which lumped pending
-  // and missing together and no longer maps onto one option) falls back to
-  // "all" rather than silently meaning something narrower than it used to.
+function asHouseFilter(value: string | undefined): MemberHouseFilter {
   if (value === "yes") return "verified";
   return value === "verified" || value === "pending" || value === "missing" ? value : "all";
 }
 
-/** Server-side filtering (Part 5) — the full roster is already one query (getMembersWithStats); this just filters the already-fetched array per request, driven by MembersFilterBar's URL searchParams. */
-function filterMembers(members: MemberWithStats[], params: MembersSearchParams): MemberWithStats[] {
-  const q = (params.q ?? "").trim().toLowerCase();
-  const role = VALID_ROLES.includes(params.role as Role) ? (params.role as Role) : "all";
-  const status = VALID_STATUSES.includes(params.status as UserStatus) ? (params.status as UserStatus) : "all";
-  const classification = VALID_CLASSIFICATIONS.includes(params.classification as Classification)
-    ? (params.classification as Classification)
-    : "all";
-  const major = params.major ?? "all";
-  const eligible = asTri(params.eligible);
-  const dues = asTri(params.dues);
-  const national = asTri(params.national);
-  const house = asHouseFilter(params.house);
-  const resume = asTri(params.resume);
-
-  return members
-    .filter((m) => role === "all" || m.role === role)
-    .filter((m) => status === "all" || m.status === status)
-    .filter((m) => classification === "all" || m.classification === classification)
-    .filter((m) => major === "all" || m.major === major)
-    .filter((m) => matchesTri(m.eligible, eligible))
-    // Dues/National filter on the CLAIM, not on verification — "Reported"
-    // has always meant "the member said yes," which is also what drives
-    // leaderboard eligibility. The roster's glyph now says separately
-    // whether anyone checked it (see ClaimStatus).
-    .filter((m) => matchesTri(m.duesPaidReported === true, dues))
-    .filter((m) => matchesTri(m.nationalMemberReported === true, national))
-    .filter((m) => house === "all" || m.houseState === (house === "missing" ? "none" : house))
-    .filter((m) => matchesTri(m.resumeFileId !== null, resume))
-    .filter(
-      (m) =>
-        !q ||
-        `${m.firstName} ${m.lastName} ${m.email} ${m.studentId} ${m.nsbeMembershipId}`.toLowerCase().includes(q),
-    )
-    .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+/**
+ * URL search params → the filter object the SERVER queries with.
+ *
+ * Every filter is applied in SQL (see lib/repo.ts memberWhere), not to a
+ * preloaded array: searching for a name has to find someone who isn't on the
+ * loaded page, and the summary counts have to cover everyone who matches.
+ */
+function toFilters(params: MembersSearchParams): MemberFilters {
+  return {
+    q: (params.q ?? "").trim(),
+    role: VALID_ROLES.includes(params.role as Role) ? (params.role as Role) : "all",
+    status: VALID_STATUSES.includes(params.status as UserStatus) ? (params.status as UserStatus) : "all",
+    classification: VALID_CLASSIFICATIONS.includes(params.classification as Classification)
+      ? (params.classification as Classification)
+      : "all",
+    major: params.major ?? "all",
+    eligible: asTri(params.eligible),
+    dues: asTri(params.dues),
+    national: asTri(params.national),
+    house: asHouseFilter(params.house),
+    resume: asTri(params.resume),
+    // "none" is a real, actionable value, not an absent filter: it finds the
+    // members holding up an apparel order.
+    tshirt: params.tshirt === "none" || SHIRT_SIZE_OPTIONS.includes(params.tshirt as ShirtSize) ? params.tshirt! : "all",
+  };
 }
 
 export default async function AdminMembersPage({ searchParams }: { searchParams: Promise<MembersSearchParams> }) {
@@ -96,18 +82,23 @@ export default async function AdminMembersPage({ searchParams }: { searchParams:
   if (!guard.ok) return <AccessDenied denied={guard} />;
   const session = guard.session;
   const params = await searchParams;
-  const [members, coreFormConfig] = await Promise.all([
-    getMembersWithStats(session.user.orgId),
+  const filters = toFilters(params);
+
+  // Three scoped reads instead of the whole roster: one page of rows, the
+  // aggregate counts over every matching member (never derived from the loaded
+  // rows), and the form config.
+  const [page, aggregates, coreFormConfig] = await Promise.all([
+    getMembersPage(session.user.orgId, filters),
+    getMemberAggregates(session.user.orgId, filters),
     getCoreFormConfig(session.user.orgId),
   ]);
-  const filtered = filterMembers(members, params);
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
       <div>
         <h1 className="font-display text-2xl font-bold text-ink">Members</h1>
         <p className="numeric text-sm text-muted">
-          {filtered.length} of {members.length} on the roster
+          {aggregates.total} matching · {aggregates.eligible} eligible
         </p>
       </div>
       <AdminNav active="/admin/members" access={guard.access} />
@@ -125,7 +116,13 @@ export default async function AdminMembersPage({ searchParams }: { searchParams:
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Roster</h2>
         <MembersFilterBar majors={coreFormConfig.majors} />
-        <MembersTable members={filtered} houses={coreFormConfig.houses} exportsEnabled={guard.access.features.exports} />
+        <MembersTable
+          initialPage={page}
+          total={aggregates.total}
+          filters={filters}
+          houses={coreFormConfig.houses}
+          exportsEnabled={guard.access.features.exports}
+        />
       </section>
     </main>
   );

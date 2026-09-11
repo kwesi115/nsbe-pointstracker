@@ -1,17 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { setRoleAction } from "@/app/(member)/admin/members/actions";
+import { useState } from "react";
+import { setRoleAction, type MemberActionState } from "@/app/(member)/admin/members/actions";
 import { selectClass } from "@/components/ui/Field";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import type { Role } from "@/lib/types";
 
 const LABEL: Record<Role, string> = { admin: "Admin", general: "General", eboard: "E-Board", guest: "Guest" };
+const INITIAL_STATE: MemberActionState = { error: null };
 
 export default function RoleSelect({ email, role }: { email: string; role: Role }) {
   const [pendingRole, setPendingRole] = useState<Role | null>(null);
-  const [isPending, startTransition] = useTransition();
   const { show } = useToast();
 
   // Both boards are derived at read time from current role, not stored — so
@@ -37,7 +37,7 @@ export default function RoleSelect({ email, role }: { email: string; role: Role 
         <option value="guest">Guest</option>
       </select>
 
-      <ConfirmDialog
+      <ConfirmDialog<MemberActionState>
         open={pendingRole !== null}
         title={`Change role to ${pendingRole ? LABEL[pendingRole] : ""}?`}
         description={
@@ -63,16 +63,15 @@ export default function RoleSelect({ email, role }: { email: string; role: Role 
           )
         }
         confirmLabel="Change role"
-        pending={isPending}
+        action={setRoleAction}
+        initialState={INITIAL_STATE}
+        // The new role travels in the submission, so it cannot be read from
+        // stale state by a handler that fired twice.
+        payload={{ email, role: pendingRole }}
         onCancel={() => setPendingRole(null)}
-        onConfirm={() => {
-          if (!pendingRole) return;
-          startTransition(async () => {
-            const result = await setRoleAction(email, pendingRole);
-            if (result.error) show(result.error, "error");
-            else show(`${email} is now ${LABEL[pendingRole]}`);
-            setPendingRole(null);
-          });
+        onSuccess={() => {
+          show(`${email} is now ${pendingRole ? LABEL[pendingRole] : ""}`);
+          setPendingRole(null);
         }}
       />
     </>

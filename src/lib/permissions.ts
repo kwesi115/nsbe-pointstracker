@@ -15,14 +15,22 @@
 
 import { forbidden } from "next/navigation";
 import type { Session } from "next-auth";
-import { denialMessage } from "./access";
+import { denialMessage, roleHoldsPermission } from "./access";
 import { AppError } from "./errors";
 import { hasPermission } from "./repo";
 import { requireSession } from "./session";
 import type { PermissionName } from "./types";
 
+/**
+ * Whether this caller holds `permission` — by role, or by an active grant.
+ *
+ * The role half defers to lib/access.ts roleHoldsPermission rather than
+ * comparing roles here: which roles hold which capability outright differs per
+ * permission (an officer reviews dues as a matter of course, but does NOT get
+ * to re-point a closed event), and two implementations of that would drift.
+ */
 async function isAllowed(session: Session, permission: PermissionName): Promise<boolean> {
-  if (session.user.role === "admin" || session.user.role === "eboard") return true;
+  if (roleHoldsPermission(session.user.role, permission)) return true;
   return hasPermission(session.user.orgId, session.user.email, permission);
 }
 

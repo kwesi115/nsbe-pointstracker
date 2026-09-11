@@ -18,7 +18,7 @@ import HouseBlock from "@/components/forms/HouseBlock";
 import YesNo from "@/components/forms/YesNo";
 import Button from "@/components/ui/Button";
 import Field, { inputClass, selectClass } from "@/components/ui/Field";
-import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, coreField } from "@/lib/core-form";
+import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, SHIRT_SIZE_OPTIONS, coreField } from "@/lib/core-form";
 import type { House } from "@/lib/houses";
 import type { Classification, Role, ShirtSize } from "@/lib/types";
 import { stepsFor, validateHouseStep, type StepKey } from "./joinWizardRules";
@@ -29,7 +29,6 @@ const ACCOUNT_TYPES: Array<{ value: "general" | "eboard" | "admin"; label: strin
   { value: "admin", label: "Admin", description: "Requires a code from a current admin." },
 ];
 
-const SHIRT_SIZES: ShirtSize[] = ["XS", "S", "M", "L", "XL", "XXL", "XXXL"];
 
 const ROLE_COPY: Record<Role, string> = {
   admin: "That code creates an admin account.",
@@ -686,7 +685,7 @@ function ContactStep({
             className={selectClass}
           >
             <option value="">Select…</option>
-            {SHIRT_SIZES.map((s) => (
+            {SHIRT_SIZE_OPTIONS.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>

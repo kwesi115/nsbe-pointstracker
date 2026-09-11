@@ -85,7 +85,6 @@ export default function GroupDetail({
 }) {
   const { show } = useToast();
   const [finalizing, setFinalizing] = useState(false);
-  const [isPending, startTransition] = useTransition();
 
   return (
     <div className="flex flex-col gap-8">
@@ -101,22 +100,20 @@ export default function GroupDetail({
         ) : null}
       </div>
 
-      <ConfirmDialog
+      <ConfirmDialog<GroupActionState>
         open={finalizing}
         title="Finalize this group?"
         description="Settles the completion bonus against whatever events currently exist in the group — use this when a planned event was canceled and never happened. This cannot be undone."
         confirmLabel="Finalize"
         tone="danger"
-        pending={isPending}
+        action={finalizeGroupAction}
+        initialState={INITIAL_STATE}
+        payload={{ groupId: group.id }}
         onCancel={() => setFinalizing(false)}
-        onConfirm={() =>
-          startTransition(async () => {
-            const result = await finalizeGroupAction(group.id);
-            if (result.error) show(result.error, "error");
-            else show("Group finalized");
-            setFinalizing(false);
-          })
-        }
+        onSuccess={() => {
+          show("Group finalized");
+          setFinalizing(false);
+        }}
       />
 
       <section className="flex flex-col gap-3">

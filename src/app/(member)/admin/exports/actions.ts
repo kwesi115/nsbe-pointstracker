@@ -33,3 +33,17 @@ export async function createSnapshotAction(reason?: string): Promise<CreateSnaps
     throw err;
   }
 }
+
+/**
+ * The same snapshot, dispatched from a button (components/ui/ActionButton.tsx)
+ * rather than called from other server code. Kept separate from the function
+ * above because that one is also called internally — from a bulk import, and
+ * from a category edit — where there is no form to submit.
+ */
+export async function createSnapshotFormAction(
+  _prev: CreateSnapshotResult,
+  formData: FormData,
+): Promise<CreateSnapshotResult> {
+  const reason = String(formData.get("reason") ?? "").trim();
+  return createSnapshotAction(reason || undefined);
+}

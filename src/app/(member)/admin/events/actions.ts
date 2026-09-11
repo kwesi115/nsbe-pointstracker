@@ -89,10 +89,35 @@ export interface ActionResult {
   error: string | null;
 }
 
-export async function openEventAction(eventId: string, durationMinutes: number): Promise<ActionResult> {
+/**
+ * The event lifecycle, as `(prevState, formData)` actions.
+ *
+ * Every one of these is dispatched by a form submit — EventsBoard wraps each
+ * control in ActionButton or ConfirmDialog — so React owns the transition and
+ * reports a real `pending`. That matters most for "+10 min": the old
+ * onClick+startTransition button reported pending correctly but only after a
+ * re-render, so two clicks inside one frame both reached the server and the
+ * event quietly got +20.
+ */
+function eventIdFrom(formData: FormData): string {
+  return String(formData.get("eventId") ?? "");
+}
+
+/** Minutes from a <select>/hidden input, falling back to the caller's default rather than trusting a blank or a negative. */
+function minutesFrom(formData: FormData, field: string, fallback: number): number {
+  const raw = Number(formData.get(field));
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
+}
+
+export async function openEventAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const session = await requireEboard();
   try {
-    await openEventNow({ orgId: session.user.orgId, eventId, openedBy: session.user.email, durationMinutes });
+    await openEventNow({
+      orgId: session.user.orgId,
+      eventId: eventIdFrom(formData),
+      openedBy: session.user.email,
+      durationMinutes: minutesFrom(formData, "durationMinutes", 30),
+    });
     revalidatePath("/admin");
     return { error: null };
   } catch (err) {
@@ -101,10 +126,15 @@ export async function openEventAction(eventId: string, durationMinutes: number):
   }
 }
 
-export async function extendEventAction(eventId: string, extraMinutes = 10): Promise<ActionResult> {
+export async function extendEventAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const session = await requireEboard();
   try {
-    await extendEvent({ orgId: session.user.orgId, eventId, extraMinutes, actor: session.user.email });
+    await extendEvent({
+      orgId: session.user.orgId,
+      eventId: eventIdFrom(formData),
+      extraMinutes: minutesFrom(formData, "extraMinutes", 10),
+      actor: session.user.email,
+    });
     revalidatePath("/admin");
     return { error: null };
   } catch (err) {
@@ -113,10 +143,10 @@ export async function extendEventAction(eventId: string, extraMinutes = 10): Pro
   }
 }
 
-export async function closeEventAction(eventId: string): Promise<ActionResult> {
+export async function closeEventAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const session = await requireEboard();
   try {
-    await closeEventNow({ orgId: session.user.orgId, eventId, actor: session.user.email });
+    await closeEventNow({ orgId: session.user.orgId, eventId: eventIdFrom(formData), actor: session.user.email });
     revalidatePath("/admin");
     return { error: null };
   } catch (err) {
@@ -125,10 +155,10 @@ export async function closeEventAction(eventId: string): Promise<ActionResult> {
   }
 }
 
-export async function cancelEventAction(eventId: string): Promise<ActionResult> {
+export async function cancelEventAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const session = await requireEboard();
   try {
-    await cancelEvent(session.user.orgId, eventId, session.user.email);
+    await cancelEvent(session.user.orgId, eventIdFrom(formData), session.user.email);
     revalidatePath("/admin");
     return { error: null };
   } catch (err) {
@@ -137,10 +167,15 @@ export async function cancelEventAction(eventId: string): Promise<ActionResult> 
   }
 }
 
-export async function reopenEventAction(eventId: string, durationMinutes: number): Promise<ActionResult> {
+export async function reopenEventAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const session = await requireEboard();
   try {
-    await reopenEvent({ orgId: session.user.orgId, eventId, reopenedBy: session.user.email, durationMinutes });
+    await reopenEvent({
+      orgId: session.user.orgId,
+      eventId: eventIdFrom(formData),
+      reopenedBy: session.user.email,
+      durationMinutes: minutesFrom(formData, "durationMinutes", 30),
+    });
     revalidatePath("/admin");
     return { error: null };
   } catch (err) {
@@ -172,14 +207,23 @@ export interface AwardGameBonusResult {
   skipped: string[];
 }
 
-/** +1 per member per event, capped by PointAward's own unique constraint — see lib/repo.ts awardGameBonus. Only registrants for the event should be offered as choices by the caller. */
-export async function awardGameBonusAction(
-  eventId: string,
-  emails: string[],
-  points: number,
-  reason: string,
-): Promise<AwardGameBonusResult> {
+/**
+ * +1 per member per event, capped by PointAward's own unique constraint — see
+ * lib/repo.ts awardGameBonus. Only registrants for the event should be offered
+ * as choices by the caller.
+ *
+ * Form-dispatched like every other mutation here, so the selection, the point
+ * value and the reason are read from the submission. A repeat submission is
+ * capped by that unique constraint rather than double-awarding, which is why
+ * this one needs no request token.
+ */
+export async function awardGameBonusAction(_prev: AwardGameBonusResult, formData: FormData): Promise<AwardGameBonusResult> {
   const session = await requireEboard();
+  const eventId = String(formData.get("eventId") ?? "");
+  const emails = formData.getAll("emails").map((e) => String(e));
+  const reason = String(formData.get("reason") ?? "");
+  const pointsRaw = Number(formData.get("points"));
+  const points = Number.isFinite(pointsRaw) ? pointsRaw : 1;
   try {
     const result = await awardGameBonus(session.user.orgId, eventId, emails, points, reason, session.user.email);
     revalidatePath(`/admin/events/${eventId}/responses`);
@@ -192,8 +236,9 @@ export async function awardGameBonusAction(
 }
 
 /** The escape hatch for a per-event check-in code brute-force lock (see lib/rate-limit.ts) — a legitimate room full of people fat-fingering the code shouldn't have to wait out the full 5 minutes. */
-export async function clearEventCodeLockAction(eventId: string): Promise<ActionResult> {
+export async function clearEventCodeLockAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const session = await requireEboard();
+  const eventId = eventIdFrom(formData);
   clearEventCodeLock(eventId);
   await logSystemAdminEvent(session.user.orgId, {
     actor: session.user.email,

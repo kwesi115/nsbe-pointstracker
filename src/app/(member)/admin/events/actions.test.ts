@@ -21,6 +21,13 @@ const logSystemAdminEventMock = logSystemAdminEvent as unknown as ReturnType<typ
 
 const SESSION = { user: { orgId: "org-1", email: "eboard@bison.howard.edu", role: "eboard" } };
 
+/** The action takes FormData now — it is dispatched by a form submit, not a click handler (see components/ui/ActionButton.tsx). */
+function formDataFor(eventId: string): FormData {
+  const fd = new FormData();
+  fd.set("eventId", eventId);
+  return fd;
+}
+
 beforeEach(() => {
   requireEboardMock.mockReset().mockResolvedValue(SESSION);
   logSystemAdminEventMock.mockClear();
@@ -29,7 +36,7 @@ beforeEach(() => {
 describe("clearEventCodeLockAction", () => {
   it("requires EBOARD (or ADMIN) — an unauthenticated/non-eboard caller never reaches the lock", async () => {
     requireEboardMock.mockRejectedValueOnce(new Error("forbidden"));
-    await expect(clearEventCodeLockAction("event-1")).rejects.toThrow();
+    await expect(clearEventCodeLockAction({ error: null }, formDataFor("event-1"))).rejects.toThrow();
   });
 
   it("an eboard/admin caller clears an active lock immediately", async () => {
@@ -38,7 +45,7 @@ describe("clearEventCodeLockAction", () => {
     for (let i = 0; i < 250; i++) recordEventCodeFailure(eventId, 100, 250, now);
     expect(isEventCodeLocked(eventId, now)).toBe(true);
 
-    const result = await clearEventCodeLockAction(eventId);
+    const result = await clearEventCodeLockAction({ error: null }, formDataFor(eventId));
 
     expect(result.error).toBeNull();
     expect(isEventCodeLocked(eventId, now)).toBe(false);

@@ -14,11 +14,11 @@
 import { z } from "zod";
 import { AppError } from "./errors";
 import type { House } from "./houses";
-import type { Audience, Classification, Member, Role } from "./types";
+import type { Audience, Classification, Member, Role, ShirtSize } from "./types";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const CORE_FORM_VERSION = 2;
+export const CORE_FORM_VERSION = 3;
 
 export type CoreFormSection = "info" | "membership" | "house_resume";
 
@@ -61,6 +61,15 @@ export const CLASSIFICATION_OPTIONS: Array<{ value: Classification; label: strin
 ];
 
 export const OTHER_MAJOR = "Other";
+
+/**
+ * The seven sizes, smallest first — the ONE list every surface renders from
+ * (JoinWizard, /account, /admin/members/[id], the roster column and filter,
+ * and the roster's size breakdown). Order matters: the breakdown reports in
+ * this order, and "23 M, 31 L, 18 XL" is only readable if the sizes come out
+ * in size order rather than alphabetically or by count.
+ */
+export const SHIRT_SIZE_OPTIONS: ShirtSize[] = ["XS", "S", "M", "L", "XL", "XXL", "XXXL"];
 
 export type CoreFieldKind = "short_text" | "email" | "dropdown" | "yes_no" | "file_upload" | "choice";
 
@@ -105,6 +114,14 @@ export const CORE_FORM_FIELDS: CoreFormField[] = [
     required: true,
     prefillFrom: "personalEmail",
     helpText: "A non-Howard email so we can reach you after graduation. Not used for sign-in.",
+  },
+  {
+    id: "tshirtSize",
+    label: "T-shirt size",
+    section: "info",
+    kind: "dropdown",
+    required: true,
+    helpText: "Used for chapter apparel orders. You can change this any time from your account.",
   },
   {
     id: "classification",
@@ -240,6 +257,7 @@ export type CoreFieldKey =
   | "studentId"
   | "phone"
   | "personalEmail"
+  | "tshirtSize"
   | "classification"
   | "major"
   | "majorOther"
@@ -261,6 +279,7 @@ export interface GetMissingFieldsUser {
   studentId: string;
   phone: string;
   personalEmail: string;
+  tshirtSize: ShirtSize | "";
   classification: Classification | "";
   major: string;
   majorOther: string;
@@ -323,6 +342,11 @@ export function getMissingFields(
   if (!user.studentId) missing.push("studentId");
   if (!user.phone) missing.push("phone");
   if (!user.personalEmail) missing.push("personalEmail");
+  // Not seasonal: unlike classification/major, a shirt size doesn't go stale,
+  // so this is asked exactly once and then never again. That is what makes it
+  // safe to add to an existing roster — a member who already has one on file
+  // sees no new question.
+  if (!user.tshirtSize) missing.push("tshirtSize");
 
   const profileStale = user.profileSeason !== config.SEASON;
   if (!user.classification || profileStale) missing.push("classification");
@@ -350,6 +374,7 @@ export interface CoreFormAnswers {
   studentId?: string;
   phone?: string;
   personalEmail?: string;
+  tshirtSize?: ShirtSize;
   /** Omitted entirely once already current for this season — see profileStale in getMissingFields. */
   classification?: Classification;
   major?: string;
@@ -408,6 +433,7 @@ export function buildCoreFormSchema(ctx: CoreFormValidationContext) {
       // classification/major/majorOther are only ever in the missing set when
       // stale or absent (see getMissingFields) — an already-current value is
       // never resubmitted, so these can't be unconditionally required.
+      tshirtSize: z.enum(SHIRT_SIZE_OPTIONS as [ShirtSize, ...ShirtSize[]], "Select a size").optional(),
       classification: z.enum(classificationValues, "Select a classification").optional(),
       major: z.enum(majorValues, "Select a major").optional(),
       majorOther: z.string().trim().max(200).optional(),
@@ -426,6 +452,10 @@ export function buildCoreFormSchema(ctx: CoreFormValidationContext) {
         if (missing.has(key) && data[key] === undefined) {
           ctxRefine.addIssue({ code: "custom", path: [key], message: "Required" });
         }
+      }
+
+      if (missing.has("tshirtSize") && data.tshirtSize === undefined) {
+        ctxRefine.addIssue({ code: "custom", path: ["tshirtSize"], message: "Select a size" });
       }
 
       if (missing.has("classification") && data.classification === undefined) {

@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { inputClass, selectClass } from "@/components/ui/Field";
+import { SHIRT_SIZE_OPTIONS } from "@/lib/core-form";
 
 const TRI_FILTERS = [
   { key: "eligible", label: "Eligible", yes: "Eligible", no: "Ineligible" },
@@ -41,7 +42,7 @@ const CLASSIFICATION_OPTIONS = [
 
 // Every filter key EXCEPT search and role — those two stay inline, everything
 // else here lives in the "Filters" popover and counts toward its badge.
-const POPOVER_KEYS = ["status", ...TRI_FILTERS.map((f) => f.key), "house", "major", "classification"] as const;
+const POPOVER_KEYS = ["status", ...TRI_FILTERS.map((f) => f.key), "house", "major", "classification", "tshirt"] as const;
 
 const DEBOUNCE_MS = 300;
 
@@ -50,6 +51,7 @@ function labelFor(key: string, value: string): string {
   if (key === "classification") return CLASSIFICATION_OPTIONS.find((o) => o.value === value)?.label ?? value;
   if (key === "role") return value === "eboard" ? "E-Board" : value.charAt(0).toUpperCase() + value.slice(1);
   if (key === "house") return `House: ${HOUSE_OPTIONS.find((o) => o.value === value)?.label ?? value}`;
+  if (key === "tshirt") return value === "none" ? "T-shirt: not set" : `T-shirt: ${value}`;
   const tri = TRI_FILTERS.find((f) => f.key === key);
   if (tri) return value === "yes" ? tri.yes : tri.no;
   return value;
@@ -207,6 +209,20 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
                         {o.label}
                       </option>
                     ))}
+                  </select>
+                </label>
+
+                <label className="col-span-2 flex flex-col gap-1 text-xs font-medium text-muted">
+                  T-shirt size
+                  <select defaultValue={searchParams.get("tshirt") ?? "all"} onChange={(e) => updateParam("tshirt", e.target.value)} className={selectClass}>
+                    <option value="all">All sizes</option>
+                    {SHIRT_SIZE_OPTIONS.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                    {/* The actionable gap: whoever is ordering shirts needs to find who still hasn't given one. */}
+                    <option value="none">Not set</option>
                   </select>
                 </label>
 

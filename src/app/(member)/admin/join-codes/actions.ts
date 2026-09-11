@@ -40,10 +40,18 @@ export async function createJoinCodeAction(_prev: JoinCodeActionState, formData:
   }
 }
 
-export async function rotateJoinCodeAction(id: string): Promise<JoinCodeActionState> {
+/**
+ * Rotating a code generates a credential, so this is the second action with a
+ * request token (see lib/repo.ts rotateJoinCodeById): two submissions of one
+ * confirmation rotate the code ONCE, instead of the second rotation quietly
+ * invalidating the plaintext the admin is still copying off the screen.
+ */
+export async function rotateJoinCodeAction(_prev: JoinCodeActionState, formData: FormData): Promise<JoinCodeActionState> {
   const session = await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const requestToken = String(formData.get("requestToken") ?? "") || undefined;
   try {
-    const result = await rotateJoinCodeById(session.user.orgId, id, session.user.email);
+    const result = await rotateJoinCodeById(session.user.orgId, id, session.user.email, { requestToken });
     revalidatePath("/admin/join-codes");
     return { error: null, plaintext: result.plaintext };
   } catch (err) {
@@ -52,10 +60,13 @@ export async function rotateJoinCodeAction(id: string): Promise<JoinCodeActionSt
   }
 }
 
-export async function deactivateJoinCodeAction(id: string): Promise<{ error: string | null }> {
+export async function deactivateJoinCodeAction(
+  _prev: JoinCodeActionState,
+  formData: FormData,
+): Promise<JoinCodeActionState> {
   const session = await requireAdmin();
   try {
-    await deactivateJoinCode(session.user.orgId, id, session.user.email);
+    await deactivateJoinCode(session.user.orgId, String(formData.get("id") ?? ""), session.user.email);
     revalidatePath("/admin/join-codes");
     return { error: null };
   } catch (err) {

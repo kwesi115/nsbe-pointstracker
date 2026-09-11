@@ -1,0 +1,13 @@
+-- Adds the ATTENDANCE_WRITE capability (see prisma/schema.prisma enum
+-- Permission, lib/access.ts PERMISSION_ROLES).
+--
+-- Why a grant rather than a role check: adding attendance to a closed event
+-- AWARDS POINTS. Unlike VERIFICATIONS_WRITE, which every E-Board officer
+-- holds by virtue of their role, this one is held outright only by ADMIN --
+-- which is what makes "an officer with read-only attendance access" a real,
+-- expressible state instead of a comment.
+--
+-- Postgres 12+ permits ALTER TYPE ... ADD VALUE inside a transaction block
+-- (scripts/db-apply-sql.ts wraps this file in one) as long as the new value
+-- is not USED in the same transaction. Nothing below uses it.
+ALTER TYPE "Permission" ADD VALUE IF NOT EXISTS 'ATTENDANCE_WRITE';

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { approveAction, revokeAction } from "@/app/(member)/admin/verifications/actions";
-import RevokeDialog from "@/components/admin/RevokeDialog";
+import { useState } from "react";
+import { approveAction, revokeAction, type VerificationActionState } from "@/app/(member)/admin/verifications/actions";
+import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
 import { CLAIM_STATE_LABEL, claimState, type ClaimState } from "@/lib/claim-state";
@@ -37,32 +38,32 @@ const TONE: Record<ClaimState, "signal" | "amber" | "alert" | "muted"> = {
   none: "muted",
 };
 
+const INITIAL_STATE: VerificationActionState = { error: null };
+
 /** Reported values with timestamps, verified/revoked state, and Verify/Revoke — same repo functions /admin/verifications uses (Part 5). Revoke requires a note and immediately removes the member from the leaderboard. */
 export default function AdminMembershipPanel({ member, season }: { member: MembershipMember; season: string }) {
   const [revokeTab, setRevokeTab] = useState<"dues" | "national" | null>(null);
-  const [isPending, startTransition] = useTransition();
   const { show } = useToast();
 
   const dues = claimState(member.duesPaidReported, member.duesVerifiedAt, member.duesRevokedAt);
   const national = claimState(member.nationalMemberReported, member.nationalVerifiedAt, member.nationalRevokedAt);
 
-  function verify(tab: "dues" | "national") {
-    startTransition(async () => {
-      const result = await approveAction(tab, member.email);
-      if (result.error) show(result.error, "error");
-      else show("Verified");
-    });
-  }
-
-  function confirmRevoke(note: string) {
-    if (!revokeTab) return;
-    const tab = revokeTab;
-    startTransition(async () => {
-      const result = await revokeAction(tab, member.email, note);
-      if (result.error) show(result.error, "error");
-      else show("Revoked");
-      setRevokeTab(null);
-    });
+  function claimRow(tab: "dues" | "national") {
+    return (
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" onClick={() => setRevokeTab(tab)}>
+          Revoke
+        </Button>
+        <ActionButton<VerificationActionState>
+          action={approveAction}
+          initialState={INITIAL_STATE}
+          payload={{ tab, email: member.email }}
+          label="Verify"
+          onSuccess={() => show("Verified")}
+          onError={(message) => show(message, "error")}
+        />
+      </div>
+    );
   }
 
   return (
@@ -90,16 +91,7 @@ export default function AdminMembershipPanel({ member, season }: { member: Membe
               {member.duesRevokedNote ? <p className="mt-1 text-xs text-muted">{member.duesRevokedNote}</p> : null}
             </td>
             <td className={tdClass}>{member.membershipSeason || "—"}</td>
-            <td className={tdClass}>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={() => setRevokeTab("dues")} disabled={isPending}>
-                  Revoke
-                </Button>
-                <Button type="button" onClick={() => verify("dues")} disabled={isPending}>
-                  Verify
-                </Button>
-              </div>
-            </td>
+            <td className={tdClass}>{claimRow("dues")}</td>
           </tr>
           <tr className="last:border-0">
             <td className={tdClass}>National NSBE</td>
@@ -115,27 +107,33 @@ export default function AdminMembershipPanel({ member, season }: { member: Membe
               {member.nationalRevokedNote ? <p className="mt-1 text-xs text-muted">{member.nationalRevokedNote}</p> : null}
             </td>
             <td className={tdClass}>{member.membershipSeason || "—"}</td>
-            <td className={tdClass}>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={() => setRevokeTab("national")} disabled={isPending}>
-                  Revoke
-                </Button>
-                <Button type="button" onClick={() => verify("national")} disabled={isPending}>
-                  Verify
-                </Button>
-              </div>
-            </td>
+            <td className={tdClass}>{claimRow("national")}</td>
           </tr>
         </tbody>
       </Table>
       <p className="text-xs text-muted">Current season: {season || "—"}</p>
 
-      <RevokeDialog
+      {/* The shared dialog, with its required-note field — the same one
+          /admin/verifications uses, rather than a second hand-rolled copy. */}
+      <ConfirmDialog<VerificationActionState>
         open={revokeTab !== null}
         title={`Revoke ${revokeTab === "dues" ? "dues" : "national membership"} claim?`}
-        pending={isPending}
-        onConfirm={confirmRevoke}
+        description="This removes them from the leaderboard immediately and re-arms the question at their next check-in. Say why."
+        confirmLabel="Revoke"
+        tone="danger"
+        action={revokeAction}
+        initialState={INITIAL_STATE}
+        payload={{ tab: revokeTab, email: member.email }}
+        reason={{
+          label: "Why",
+          placeholder: "e.g. Payment record doesn't show this member",
+          help: "Recorded against the claim and shown on this panel.",
+        }}
         onCancel={() => setRevokeTab(null)}
+        onSuccess={() => {
+          show("Revoked");
+          setRevokeTab(null);
+        }}
       />
     </div>
   );

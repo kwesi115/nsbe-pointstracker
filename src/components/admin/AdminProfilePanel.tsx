@@ -6,17 +6,40 @@ import Button from "@/components/ui/Button";
 import Field, { inputClass, selectClass } from "@/components/ui/Field";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
-import { CLASSIFICATION_OPTIONS, OTHER_MAJOR } from "@/lib/core-form";
-import type { Classification, Member } from "@/lib/types";
+import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, SHIRT_SIZE_OPTIONS, coreField } from "@/lib/core-form";
+import type { Classification, Member, ShirtSize } from "@/lib/types";
 
-type ProfileMember = Pick<Member, "email" | "firstName" | "lastName" | "studentId" | "classification" | "major" | "majorOther">;
+type ProfileMember = Pick<
+  Member,
+  | "email"
+  | "firstName"
+  | "lastName"
+  | "studentId"
+  | "phone"
+  | "personalEmail"
+  | "tshirtSize"
+  | "classification"
+  | "major"
+  | "majorOther"
+>;
 
-/** Every field, admin-editable — each edit logged via adminUpdateProfileAction (same updateProfileFields mutator /account uses, actor is the admin). */
+/**
+ * Every field, admin-editable — each edit logged via adminUpdateProfileAction
+ * (same updateProfileFields mutator /account uses, actor is the admin).
+ *
+ * Phone, personal email and t-shirt size are here because all three are
+ * collected and required at signup but were invisible to an admin: a wrong
+ * value could only ever be fixed by the member themselves, and a shirt size
+ * could not be read at all by whoever was ordering apparel.
+ */
 export default function AdminProfilePanel({ member, majors }: { member: ProfileMember; majors: string[] }) {
   const [editing, setEditing] = useState(false);
   const [firstName, setFirstName] = useState(member.firstName);
   const [lastName, setLastName] = useState(member.lastName);
   const [studentId, setStudentId] = useState(member.studentId);
+  const [phone, setPhone] = useState(member.phone);
+  const [personalEmail, setPersonalEmail] = useState(member.personalEmail);
+  const [tshirtSize, setTshirtSize] = useState<ShirtSize | "">(member.tshirtSize);
   const [classification, setClassification] = useState<Classification | "">(member.classification);
   const [major, setMajor] = useState(member.major);
   const [majorOther, setMajorOther] = useState(member.majorOther);
@@ -29,6 +52,9 @@ export default function AdminProfilePanel({ member, majors }: { member: ProfileM
         firstName,
         lastName,
         studentId,
+        phone,
+        personalEmail,
+        ...(tshirtSize ? { tshirtSize } : {}),
         ...(classification ? { classification } : {}),
         major,
         majorOther: major === OTHER_MAJOR ? majorOther : "",
@@ -46,6 +72,9 @@ export default function AdminProfilePanel({ member, majors }: { member: ProfileM
     setFirstName(member.firstName);
     setLastName(member.lastName);
     setStudentId(member.studentId);
+    setPhone(member.phone);
+    setPersonalEmail(member.personalEmail);
+    setTshirtSize(member.tshirtSize);
     setClassification(member.classification);
     setMajor(member.major);
     setMajorOther(member.majorOther);
@@ -72,6 +101,18 @@ export default function AdminProfilePanel({ member, majors }: { member: ProfileM
               <td className={tdClass}>{member.studentId || "—"}</td>
             </tr>
             <tr className="border-b border-line">
+              <td className={tdClass}>Phone</td>
+              <td className={tdClass}>{member.phone || "—"}</td>
+            </tr>
+            <tr className="border-b border-line">
+              <td className={tdClass}>Personal email</td>
+              <td className={tdClass}>{member.personalEmail || "—"}</td>
+            </tr>
+            <tr className="border-b border-line">
+              <td className={tdClass}>T-shirt size</td>
+              <td className={tdClass}>{member.tshirtSize || "—"}</td>
+            </tr>
+            <tr className="border-b border-line">
               <td className={tdClass}>Classification</td>
               <td className={tdClass}>{CLASSIFICATION_OPTIONS.find((o) => o.value === member.classification)?.label ?? "—"}</td>
             </tr>
@@ -95,6 +136,24 @@ export default function AdminProfilePanel({ member, majors }: { member: ProfileM
         <Field label="Last name">{(id) => <input id={id} value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />}</Field>
       </div>
       <Field label="Student ID">{(id) => <input id={id} value={studentId} onChange={(e) => setStudentId(e.target.value)} className={inputClass} />}</Field>
+      <Field label="Phone">{(id) => <input id={id} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />}</Field>
+      <Field label="Personal email">
+        {(id) => <input id={id} type="email" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} className={inputClass} />}
+      </Field>
+      <Field label={coreField("tshirtSize").label}>
+        {(id) => (
+          <select id={id} value={tshirtSize} onChange={(e) => setTshirtSize(e.target.value as ShirtSize)} className={selectClass}>
+            <option value="" disabled>
+              Select…
+            </option>
+            {SHIRT_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
       <Field label="Classification">
         {(id) => (
           <select id={id} value={classification} onChange={(e) => setClassification(e.target.value as Classification)} className={selectClass}>

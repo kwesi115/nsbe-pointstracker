@@ -28,6 +28,7 @@ const COMPLETE_USER: GetMissingFieldsUser = {
   studentId: "1000001",
   phone: "555-0100",
   personalEmail: "ada@example.com",
+  tshirtSize: "M",
   classification: "senior",
   major: "Computer Science",
   majorOther: "",
@@ -87,6 +88,7 @@ describe("getMissingFields", () => {
       studentId: "",
       phone: "",
       personalEmail: "",
+      tshirtSize: "",
       classification: "",
       major: "",
       majorOther: "",
@@ -247,6 +249,7 @@ describe("getMissingFields", () => {
       studentId: "",
       phone: "",
       personalEmail: "",
+      tshirtSize: "",
       classification: "",
       major: "",
       profileSeason: "",
@@ -273,6 +276,7 @@ describe("getMissingFields", () => {
       studentId: "",
       phone: "",
       personalEmail: "",
+      tshirtSize: "",
       classification: "",
       major: "",
       profileSeason: "",
@@ -477,5 +481,36 @@ describe("description parsing", () => {
     });
     const parts = parseDescription(resolved);
     expect(parts).toContainEqual({ type: "link", text: "the site", href: "https://example.org/dues" });
+  });
+});
+
+describe("getMissingFields — t-shirt size", () => {
+  it("asks a member who has no size on file", () => {
+    expect(getMissingFields({ ...COMPLETE_USER, tshirtSize: "" }, ALL_EVENT, { SEASON })).toContain("tshirtSize");
+  });
+
+  it("never asks again once a size is on file", () => {
+    expect(getMissingFields(COMPLETE_USER, ALL_EVENT, { SEASON })).not.toContain("tshirtSize");
+  });
+
+  // Unlike classification/major, a shirt size doesn't go stale — a new season
+  // must not re-ask for it, or every returning member loses their one-tap
+  // check-in over a field that hasn't changed.
+  it("does not re-ask at the start of a new season", () => {
+    const staleProfile = { ...COMPLETE_USER, profileSeason: "2020-2021" };
+    const missing = getMissingFields(staleProfile, ALL_EVENT, { SEASON });
+
+    expect(missing).toContain("classification");
+    expect(missing).not.toContain("tshirtSize");
+  });
+
+  it("is not asked on an EBOARD_ONLY event, like every other non-name field", () => {
+    const noSize = { ...COMPLETE_USER, tshirtSize: "" as const };
+    expect(getMissingFields(noSize, { audience: "eboard_only" }, { SEASON })).not.toContain("tshirtSize");
+  });
+
+  it("is not asked of an ADMIN, who never had a member profile", () => {
+    const admin = { ...COMPLETE_USER, role: "admin" as const, tshirtSize: "" as const };
+    expect(getMissingFields(admin, ALL_EVENT, { SEASON })).not.toContain("tshirtSize");
   });
 });

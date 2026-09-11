@@ -12,6 +12,7 @@ import HouseDot from "@/components/ui/HouseDot";
 import {
   CLASSIFICATION_OPTIONS,
   OTHER_MAJOR,
+  SHIRT_SIZE_OPTIONS,
   coreField,
   getMissingFields,
   type CoreFieldKey,
@@ -57,6 +58,7 @@ type CoreCheckInMember = Pick<
   | "studentId"
   | "phone"
   | "personalEmail"
+  | "tshirtSize"
   | "classification"
   | "major"
   | "majorOther"
@@ -124,6 +126,7 @@ export default function CoreCheckInForm({
   const studentIdLive = showMemberFields && isLive("studentId");
   const phoneLive = showMemberFields && isLive("phone");
   const personalEmailLive = showMemberFields && isLive("personalEmail");
+  const tshirtSizeLive = showMemberFields && isLive("tshirtSize");
   const classificationLive = showMemberFields && isLive("classification");
   const majorLive = showMemberFields && isLive("major");
   // isLive("majorOther") covers the server-known case (major already "Other"
@@ -170,6 +173,9 @@ export default function CoreCheckInForm({
           ) : null}
           {showMemberFields && !personalEmailLive ? (
             <ConfirmationRow label="Personal email" value={member.personalEmail} onEdit={() => edit("personalEmail")} />
+          ) : null}
+          {showMemberFields && !tshirtSizeLive ? (
+            <ConfirmationRow label="T-shirt size" value={member.tshirtSize} onEdit={() => edit("tshirtSize")} />
           ) : null}
           {showMemberFields && !classificationLive ? (
             <ConfirmationRow
@@ -280,6 +286,30 @@ export default function CoreCheckInForm({
               aria-describedby={describedBy}
               className={inputClass}
             />
+          )}
+        </Field>
+      ) : null}
+
+      {tshirtSizeLive ? (
+        <Field label={coreField("tshirtSize").label} required error={errors.tshirtSize} help={coreField("tshirtSize").helpText}>
+          {(id, describedBy) => (
+            <select
+              id={id}
+              value={value.tshirtSize ?? ""}
+              onChange={(e) => onChange({ tshirtSize: e.target.value as CoreFormAnswers["tshirtSize"] })}
+              disabled={disabled}
+              aria-describedby={describedBy}
+              className={selectClass}
+            >
+              <option value="" disabled>
+                Select…
+              </option>
+              {SHIRT_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
           )}
         </Field>
       ) : null}

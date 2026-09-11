@@ -2,7 +2,7 @@
 
 import { Upload } from "lucide-react";
 import { useRef, useState } from "react";
-import { commitImportAction, previewImportAction } from "@/app/(member)/admin/members/actions";
+import { commitImportAction, previewImportAction, type CommitImportResult } from "@/app/(member)/admin/members/actions";
 import { createSnapshotAction } from "@/app/(member)/admin/exports/actions";
 import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -34,6 +34,8 @@ function parseImportFile(text: string): BulkImportRow[] {
     };
   });
 }
+
+const INITIAL_COMMIT_STATE: CommitImportResult = { error: null, created: [], skipped: 0 };
 
 function downloadCsv(filename: string, rows: string[][]) {
   const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" });
@@ -74,31 +76,27 @@ export default function MemberImport() {
     }
   }
 
-  async function handleCommit() {
-    if (!rows) return;
-    setBusy(true);
-    // Fire-and-forget — a slow snapshot shouldn't hang a bulk import, and a
-    // snapshot failure shouldn't block it either (the nightly pg_dump is
-    // still the real backup; this is the "one more safety net" layer).
-    void createSnapshotAction(`before bulk import of ${rows.length} member(s)`).catch(() => {});
-    try {
-      const result = await commitImportAction(rows);
-      show(`Imported ${result.created.length} member(s), skipped ${result.skipped}.`);
-      if (result.created.length > 0) {
-        downloadCsv(
-          "nsbe-setup-codes.csv",
-          [["email", "setupCode"], ...result.created.map((c) => [c.email, c.setupCode])],
-        );
-      }
-      setRows(null);
-      setPreview(null);
-      if (fileRef.current) fileRef.current.value = "";
-    } catch (err) {
-      show(err instanceof Error ? err.message : "Import failed.", "error");
-    } finally {
-      setBusy(false);
-      setConfirming(false);
+  // Fire-and-forget, taken when the confirmation opens rather than as it is
+  // submitted — a slow snapshot shouldn't hang a bulk import, and a snapshot
+  // failure shouldn't block it either (the nightly pg_dump is still the real
+  // backup; this is the "one more safety net" layer).
+  function confirmImport() {
+    if (rows) void createSnapshotAction(`before bulk import of ${rows.length} member(s)`).catch(() => {});
+    setConfirming(true);
+  }
+
+  function imported(result: CommitImportResult) {
+    show(`Imported ${result.created.length} member(s), skipped ${result.skipped}.`);
+    if (result.created.length > 0) {
+      downloadCsv(
+        "nsbe-setup-codes.csv",
+        [["email", "setupCode"], ...result.created.map((c) => [c.email, c.setupCode])],
+      );
     }
+    setRows(null);
+    setPreview(null);
+    setConfirming(false);
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   return (
@@ -146,7 +144,7 @@ export default function MemberImport() {
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={() => setConfirming(true)} disabled={busy || preview.toCreate.length === 0}>
+              <Button type="button" onClick={confirmImport} disabled={busy || preview.toCreate.length === 0}>
                 {busy ? "Importing…" : `Create ${preview.toCreate.length}`}
               </Button>
             </div>
@@ -167,14 +165,21 @@ export default function MemberImport() {
         </div>
       ) : null}
 
-      <ConfirmDialog
+      {/* The parsed rows travel in a hidden field, so the import that runs is
+          the one that was previewed — and the dialog holds its own pending
+          state instead of the page's `busy` flag, which used to be set by the
+          click handler and could never disable the button in time. */}
+      <ConfirmDialog<CommitImportResult>
         open={confirming}
         title={`Create ${preview?.toCreate.length ?? 0} member accounts?`}
         description="Each one gets a fresh setup code. You'll get a one-time CSV of those codes to hand out — it won't be shown again after this."
         confirmLabel="Create accounts"
-        pending={busy}
+        action={commitImportAction}
+        initialState={INITIAL_COMMIT_STATE}
+        payload={{ rows: JSON.stringify(rows ?? []) }}
+        confirmDisabled={!rows || rows.length === 0}
         onCancel={() => setConfirming(false)}
-        onConfirm={handleCommit}
+        onSuccess={imported}
       />
     </div>
   );

@@ -6,11 +6,13 @@ import {
   bulkApproveAction,
   rejectAction,
   revokeAction,
+  type VerificationActionState,
   type VerificationQueueTab,
 } from "@/app/(member)/admin/verifications/actions";
+import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import RevokeDialog from "@/components/admin/RevokeDialog";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
 import type { Member, Role } from "@/lib/types";
@@ -20,6 +22,8 @@ interface Tab {
   label: string;
   members: Member[];
 }
+
+const INITIAL_STATE: VerificationActionState = { error: null };
 
 const ROLE_LABEL: Record<Role, string> = {
   general: "General",
@@ -69,33 +73,10 @@ export default function VerificationQueue({
     setSelected((prev) => (prev.size === active.members.length ? new Set() : new Set(active.members.map((m) => m.email))));
   }
 
-  function approve(email: string) {
-    startTransition(async () => {
-      const result = await approveAction(activeTab, email);
-      if (result.error) show(result.error, "error");
-      else show("Verified");
-    });
-  }
-
-  function reject(email: string) {
-    startTransition(async () => {
-      const result = await rejectAction(email);
-      if (result.error) show(result.error, "error");
-      else show("Rejected");
-    });
-  }
-
-  function confirmRevoke(note: string) {
-    if (!revokeTarget || activeTab === "house") return;
-    const email = revokeTarget;
-    startTransition(async () => {
-      const result = await revokeAction(activeTab, email, note);
-      if (result.error) show(result.error, "error");
-      else show("Revoked");
-      setRevokeTarget(null);
-    });
-  }
-
+  // Bulk approve is the one action here still dispatched from a click: it has
+  // no form and no single payload — it loops the selection server-side. It is
+  // also idempotent (verifying a verified claim changes nothing), so a repeat
+  // is harmless where a repeat of revoke or rotate would not be.
   function approveSelected() {
     startTransition(async () => {
       const result = await bulkApproveAction(activeTab, Array.from(selected));
@@ -210,17 +191,31 @@ export default function VerificationQueue({
                 ) : null}
                 <td className={tdClass}>
                   <div className="flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => (activeTab === "house" ? reject(m.email) : setRevokeTarget(m.email))}
+                    {activeTab === "house" ? (
+                      <ActionButton<VerificationActionState>
+                        action={rejectAction}
+                        initialState={INITIAL_STATE}
+                        payload={{ email: m.email }}
+                        label="Reject"
+                        variant="secondary"
+                        disabled={isPending}
+                        onSuccess={() => show("Rejected")}
+                        onError={(message) => show(message, "error")}
+                      />
+                    ) : (
+                      <Button type="button" variant="secondary" onClick={() => setRevokeTarget(m.email)} disabled={isPending}>
+                        Revoke
+                      </Button>
+                    )}
+                    <ActionButton<VerificationActionState>
+                      action={approveAction}
+                      initialState={INITIAL_STATE}
+                      payload={{ tab: activeTab, email: m.email }}
+                      label="Approve"
                       disabled={isPending}
-                    >
-                      {activeTab === "house" ? "Reject" : "Revoke"}
-                    </Button>
-                    <Button type="button" onClick={() => approve(m.email)} disabled={isPending}>
-                      Approve
-                    </Button>
+                      onSuccess={() => show("Verified")}
+                      onError={(message) => show(message, "error")}
+                    />
                   </div>
                 </td>
               </tr>
@@ -229,12 +224,27 @@ export default function VerificationQueue({
         </Table>
       )}
 
-      <RevokeDialog
+      {/* The shared dialog with its required-note field, in place of the
+          hand-rolled RevokeDialog this used to carry. */}
+      <ConfirmDialog<VerificationActionState>
         open={revokeTarget !== null}
         title="Revoke this claim?"
-        pending={isPending}
-        onConfirm={confirmRevoke}
+        description="This removes them from the leaderboard immediately and re-arms the question at their next check-in. Say why."
+        confirmLabel="Revoke"
+        tone="danger"
+        action={revokeAction}
+        initialState={INITIAL_STATE}
+        payload={{ tab: activeTab, email: revokeTarget }}
+        reason={{
+          label: "Why",
+          placeholder: "e.g. Payment record doesn't show this member",
+          help: "Recorded against the claim and shown on the member's page.",
+        }}
         onCancel={() => setRevokeTarget(null)}
+        onSuccess={() => {
+          show("Revoked");
+          setRevokeTarget(null);
+        }}
       />
     </div>
   );

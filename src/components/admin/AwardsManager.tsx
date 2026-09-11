@@ -12,6 +12,7 @@ import {
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Field, { inputClass } from "@/components/ui/Field";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
@@ -23,50 +24,36 @@ const INITIAL_MANUAL_STATE: AwardActionState = { error: null };
 function RevokeControl({ award }: { award: PointAward }) {
   const { show } = useToast();
   const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [isPending, startTransition] = useTransition();
 
   if (award.revokedAt) {
     return <span className="text-xs text-muted">Revoked{award.revokeNote ? `: ${award.revokeNote}` : ""}</span>;
   }
 
-  if (!open) {
-    return (
+  return (
+    <>
       <button type="button" onClick={() => setOpen(true)} className="text-xs font-semibold text-alert underline underline-offset-2">
         Revoke
       </button>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      <input
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="Reason for revoking (required)"
-        className={`${inputClass} text-xs`}
+      {/* Was an inline note + click handler, which closed itself on dispatch
+          and sent the failure to a toast over a row the admin had moved on
+          from. The shared dialog keeps the reason and the error together. */}
+      <ConfirmDialog<AwardActionState>
+        open={open}
+        title="Revoke this award?"
+        description="The points come off the member's season total immediately."
+        confirmLabel="Revoke award"
+        tone="danger"
+        action={revokeAwardAction}
+        initialState={INITIAL_MANUAL_STATE}
+        payload={{ id: award.id }}
+        reason={{ label: "Reason for revoking", placeholder: "Awarded to the wrong member…" }}
+        onCancel={() => setOpen(false)}
+        onSuccess={() => {
+          show("Award revoked");
+          setOpen(false);
+        }}
       />
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="danger"
-          disabled={isPending || !note.trim()}
-          onClick={() =>
-            startTransition(async () => {
-              const result = await revokeAwardAction(award.id, note);
-              if (result.error) show(result.error, "error");
-              else show("Award revoked");
-              setOpen(false);
-            })
-          }
-        >
-          Confirm revoke
-        </Button>
-        <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
-          Cancel
-        </Button>
-      </div>
-    </div>
+    </>
   );
 }
 

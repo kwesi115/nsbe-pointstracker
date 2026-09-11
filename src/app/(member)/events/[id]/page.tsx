@@ -77,6 +77,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
                 studentId: "",
                 phone: "",
                 personalEmail: "",
+                tshirtSize: "",
                 classification: "",
                 major: "",
                 majorOther: "",

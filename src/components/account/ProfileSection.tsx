@@ -6,12 +6,20 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Field, { inputClass, selectClass } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
-import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, coreField } from "@/lib/core-form";
-import type { Classification, Member } from "@/lib/types";
+import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, SHIRT_SIZE_OPTIONS, coreField } from "@/lib/core-form";
+import type { Classification, Member, ShirtSize } from "@/lib/types";
 
 type ProfileMember = Pick<
   Member,
-  "firstName" | "lastName" | "studentId" | "phone" | "personalEmail" | "classification" | "major" | "majorOther"
+  | "firstName"
+  | "lastName"
+  | "studentId"
+  | "phone"
+  | "personalEmail"
+  | "tshirtSize"
+  | "classification"
+  | "major"
+  | "majorOther"
 >;
 
 /** Profile — name, student ID, contact info, classification, major. Inline edit, saves as its own section (Part 4). Phone and personal email are required (Part 2) — save is blocked client-side, and rejected server-side, when either is blank. */
@@ -22,6 +30,7 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
   const [studentId, setStudentId] = useState(member.studentId);
   const [phone, setPhone] = useState(member.phone);
   const [personalEmail, setPersonalEmail] = useState(member.personalEmail);
+  const [tshirtSize, setTshirtSize] = useState<ShirtSize | "">(member.tshirtSize);
   const [classification, setClassification] = useState<Classification | "">(member.classification);
   const [major, setMajor] = useState(member.major);
   const [majorOther, setMajorOther] = useState(member.majorOther);
@@ -42,6 +51,7 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
         studentId,
         phone,
         personalEmail,
+        ...(tshirtSize ? { tshirtSize } : {}),
         ...(classification ? { classification } : {}),
         major,
         majorOther: major === OTHER_MAJOR ? majorOther : "",
@@ -61,6 +71,7 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
     setStudentId(member.studentId);
     setPhone(member.phone);
     setPersonalEmail(member.personalEmail);
+    setTshirtSize(member.tshirtSize);
     setClassification(member.classification);
     setMajor(member.major);
     setMajorOther(member.majorOther);
@@ -104,6 +115,10 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
               <dd className="text-ink">{member.personalEmail || "—"}</dd>
             </div>
             <div>
+              <dt className="text-xs text-muted">T-shirt size</dt>
+              <dd className="text-ink">{member.tshirtSize || "—"}</dd>
+            </div>
+            <div>
               <dt className="text-xs text-muted">Classification</dt>
               <dd className="text-ink">{CLASSIFICATION_OPTIONS.find((o) => o.value === member.classification)?.label ?? "—"}</dd>
             </div>
@@ -131,6 +146,20 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
                   onChange={(e) => setPersonalEmail(e.target.value)}
                   className={inputClass}
                 />
+              )}
+            </Field>
+            <Field label={coreField("tshirtSize").label} help={coreField("tshirtSize").helpText}>
+              {(id) => (
+                <select id={id} value={tshirtSize} onChange={(e) => setTshirtSize(e.target.value as ShirtSize)} className={selectClass}>
+                  <option value="" disabled>
+                    Select…
+                  </option>
+                  {SHIRT_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
               )}
             </Field>
             <Field label="Classification">

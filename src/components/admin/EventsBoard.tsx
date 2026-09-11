@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
+import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -21,10 +22,34 @@ import {
   extendEventAction,
   openEventAction,
   reopenEventAction,
+  type ActionResult,
 } from "@/app/(member)/admin/events/actions";
 
 const POLL_MS = 15_000;
 const DURATIONS = [15, 20, 30, 45, 60];
+const DEFAULT_DURATION = 30;
+const INITIAL_STATE: ActionResult = { error: null };
+
+/**
+ * Every mutation on this board is dispatched by a form submit (ActionButton /
+ * ConfirmDialog), not from an onClick handler. The duration select lives INSIDE
+ * the form it belongs to and is read from the submission, so "Open for 45 min"
+ * can't open for 30 because a handler closed over stale state — and "+10 min"
+ * can't become +20 because two clicks landed in the same frame.
+ */
+
+/** The open/reopen duration picker, submitted as part of its own form. */
+function DurationSelect({ label }: { label: string }) {
+  return (
+    <select name="durationMinutes" defaultValue={DEFAULT_DURATION} className={`${selectClass} w-28`} aria-label={label}>
+      {DURATIONS.map((d) => (
+        <option key={d} value={d}>
+          {d} min
+        </option>
+      ))}
+    </select>
+  );
+}
 
 type EventWithAlert = EventWithStats & { codeAlert: EventCodeAlertState };
 
@@ -160,7 +185,6 @@ function RowShell({
 
 function OpenRow({ event, onChanged }: { event: EventWithAlert; onChanged: () => void }) {
   const { show } = useToast();
-  const [isPending, startTransition] = useTransition();
   const [closing, setClosing] = useState(false);
 
   return (
@@ -187,23 +211,18 @@ function OpenRow({ event, onChanged }: { event: EventWithAlert; onChanged: () =>
                 : "Unusual check-in code activity on this event."}
             </span>
             {event.codeAlert.locked ? (
-              <Button
-                type="button"
+              <ActionButton<ActionResult>
+                action={clearEventCodeLockAction}
+                initialState={INITIAL_STATE}
+                payload={{ eventId: event.eventId }}
+                label="Clear lock"
                 variant="secondary"
-                disabled={isPending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const result = await clearEventCodeLockAction(event.eventId);
-                    if (result.error) show(result.error, "error");
-                    else {
-                      show("Lock cleared");
-                      onChanged();
-                    }
-                  })
-                }
-              >
-                Clear lock
-              </Button>
+                onSuccess={() => {
+                  show("Lock cleared");
+                  onChanged();
+                }}
+                onError={(message) => show(message, "error")}
+              />
             ) : null}
           </div>
         ) : null
@@ -214,45 +233,36 @@ function OpenRow({ event, onChanged }: { event: EventWithAlert; onChanged: () =>
           <Button href={`/admin/events/${event.eventId}/display`} variant="secondary">
             Projector
           </Button>
-          <Button
-            type="button"
+          <ActionButton<ActionResult>
+            action={extendEventAction}
+            initialState={INITIAL_STATE}
+            payload={{ eventId: event.eventId, extraMinutes: 10 }}
+            label="+10 min"
             variant="secondary"
-            disabled={isPending}
-            onClick={() =>
-              startTransition(async () => {
-                const result = await extendEventAction(event.eventId, 10);
-                if (result.error) show(result.error, "error");
-                else {
-                  show("Extended +10 min");
-                  onChanged();
-                }
-              })
-            }
-          >
-            +10 min
-          </Button>
+            onSuccess={() => {
+              show("Extended +10 min");
+              onChanged();
+            }}
+            onError={(message) => show(message, "error")}
+          />
           <Button type="button" variant="danger" onClick={() => setClosing(true)}>
             Close now
           </Button>
-          <ConfirmDialog
+          <ConfirmDialog<ActionResult>
             open={closing}
             title="Close this event now?"
             description="Members won't be able to check in anymore. You can reopen it later if needed."
             confirmLabel="Close now"
             tone="danger"
-            pending={isPending}
+            action={closeEventAction}
+            initialState={INITIAL_STATE}
+            payload={{ eventId: event.eventId }}
             onCancel={() => setClosing(false)}
-            onConfirm={() =>
-              startTransition(async () => {
-                const result = await closeEventAction(event.eventId);
-                if (result.error) show(result.error, "error");
-                else {
-                  show("Closed");
-                  onChanged();
-                }
-                setClosing(false);
-              })
-            }
+            onSuccess={() => {
+              show("Closed");
+              onChanged();
+              setClosing(false);
+            }}
           />
         </>
       }
@@ -262,8 +272,6 @@ function OpenRow({ event, onChanged }: { event: EventWithAlert; onChanged: () =>
 
 function ScheduledRow({ event, onChanged }: { event: EventWithStats; onChanged: () => void }) {
   const { show } = useToast();
-  const [isPending, startTransition] = useTransition();
-  const [duration, setDuration] = useState(30);
   const [canceling, setCanceling] = useState(false);
 
   return (
@@ -278,34 +286,19 @@ function ScheduledRow({ event, onChanged }: { event: EventWithStats; onChanged: 
       }
       right={
         <>
-          <select
-            value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
-            className={`${selectClass} w-28`}
-            aria-label="Open duration"
+          <ActionButton<ActionResult>
+            action={openEventAction}
+            initialState={INITIAL_STATE}
+            payload={{ eventId: event.eventId }}
+            label="Open now"
+            onSuccess={() => {
+              show("Opened");
+              onChanged();
+            }}
+            onError={(message) => show(message, "error")}
           >
-            {DURATIONS.map((d) => (
-              <option key={d} value={d}>
-                {d} min
-              </option>
-            ))}
-          </select>
-          <Button
-            type="button"
-            disabled={isPending}
-            onClick={() =>
-              startTransition(async () => {
-                const result = await openEventAction(event.eventId, duration);
-                if (result.error) show(result.error, "error");
-                else {
-                  show("Opened");
-                  onChanged();
-                }
-              })
-            }
-          >
-            Open now
-          </Button>
+            <DurationSelect label="Open duration" />
+          </ActionButton>
           <Button href={`/admin/events/${event.eventId}/edit`} variant="secondary">
             Edit
           </Button>
@@ -315,25 +308,21 @@ function ScheduledRow({ event, onChanged }: { event: EventWithStats; onChanged: 
           <Button type="button" variant="danger" onClick={() => setCanceling(true)}>
             Cancel
           </Button>
-          <ConfirmDialog
+          <ConfirmDialog<ActionResult>
             open={canceling}
             title="Cancel this event?"
             description="It stays on record but members won't be able to check in."
             confirmLabel="Cancel event"
             tone="danger"
-            pending={isPending}
+            action={cancelEventAction}
+            initialState={INITIAL_STATE}
+            payload={{ eventId: event.eventId }}
             onCancel={() => setCanceling(false)}
-            onConfirm={() =>
-              startTransition(async () => {
-                const result = await cancelEventAction(event.eventId);
-                if (result.error) show(result.error, "error");
-                else {
-                  show("Canceled");
-                  onChanged();
-                }
-                setCanceling(false);
-              })
-            }
+            onSuccess={() => {
+              show("Canceled");
+              onChanged();
+              setCanceling(false);
+            }}
           />
         </>
       }
@@ -351,8 +340,6 @@ function PastRow({
   exportsEnabled: boolean;
 }) {
   const { show } = useToast();
-  const [isPending, startTransition] = useTransition();
-  const [duration, setDuration] = useState(30);
 
   return (
     <RowShell
@@ -383,37 +370,20 @@ function PastRow({
             </a>
           ) : null}
           {event.status !== "canceled" ? (
-            <>
-              <select
-                value={duration}
-                onChange={(e) => setDuration(Number(e.target.value))}
-                className={`${selectClass} w-28`}
-                aria-label="Reopen duration"
-              >
-                {DURATIONS.map((d) => (
-                  <option key={d} value={d}>
-                    {d} min
-                  </option>
-                ))}
-              </select>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={isPending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const result = await reopenEventAction(event.eventId, duration);
-                    if (result.error) show(result.error, "error");
-                    else {
-                      show("Reopened");
-                      onChanged();
-                    }
-                  })
-                }
-              >
-                Reopen
-              </Button>
-            </>
+            <ActionButton<ActionResult>
+              action={reopenEventAction}
+              initialState={INITIAL_STATE}
+              payload={{ eventId: event.eventId }}
+              label="Reopen"
+              variant="secondary"
+              onSuccess={() => {
+                show("Reopened");
+                onChanged();
+              }}
+              onError={(message) => show(message, "error")}
+            >
+              <DurationSelect label="Reopen duration" />
+            </ActionButton>
           ) : null}
         </>
       }

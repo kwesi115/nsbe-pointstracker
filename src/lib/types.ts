@@ -9,7 +9,7 @@
 export type Role = "admin" | "eboard" | "general" | "guest";
 
 /** A narrow, revocable capability grantable to one member independent of role — see lib/permissions.ts and prisma/schema.prisma's PermissionGrant. */
-export type PermissionName = "verifications_write";
+export type PermissionName = "verifications_write" | "attendance_write";
 
 /**
  * WHY a caller was turned away from an admin surface — the shape lib/access.ts

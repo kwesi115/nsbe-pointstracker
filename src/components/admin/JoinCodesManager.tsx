@@ -1,16 +1,18 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useState } from "react";
 import {
   createJoinCodeAction,
   deactivateJoinCodeAction,
   rotateJoinCodeAction,
   type JoinCodeActionState,
 } from "@/app/(member)/admin/join-codes/actions";
+import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Field, { inputClass, selectClass } from "@/components/ui/Field";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
@@ -96,24 +98,8 @@ function CreateForm({ onCreated }: { onCreated: (plaintext: string) => void }) {
 }
 
 function CodeRow({ code, onRotated }: { code: JoinCodeSummary; onRotated: (plaintext: string) => void }) {
-  const [isPending, startTransition] = useTransition();
+  const [rotating, setRotating] = useState(false);
   const { show } = useToast();
-
-  function rotate() {
-    startTransition(async () => {
-      const result = await rotateJoinCodeAction(code.id);
-      if (result.error) show(result.error, "error");
-      else if (result.plaintext) onRotated(result.plaintext);
-    });
-  }
-
-  function deactivate() {
-    startTransition(async () => {
-      const result = await deactivateJoinCodeAction(code.id);
-      if (result.error) show(result.error, "error");
-      else show(`"${code.label}" deactivated`);
-    });
-  }
 
   return (
     <tr className="border-b border-line last:border-0">
@@ -132,13 +118,40 @@ function CodeRow({ code, onRotated }: { code: JoinCodeSummary; onRotated: (plain
       <td className={tdClass}>{code.active ? <Badge tone="signal">Active</Badge> : <Badge tone="muted">Inactive</Badge>}</td>
       <td className={tdClass}>
         <div className="flex gap-2">
-          <Button type="button" variant="secondary" onClick={rotate} disabled={isPending}>
+          {/* Rotating had no confirmation at all, and generates a credential:
+              a stray second click replaced the code an admin was still copying
+              off the screen. Now it is confirmed, submitted as a form, and
+              carries a request token the server collapses duplicates on. */}
+          <Button type="button" variant="secondary" onClick={() => setRotating(true)}>
             Rotate
           </Button>
+          <ConfirmDialog<JoinCodeActionState>
+            open={rotating}
+            title={`Rotate "${code.label}"?`}
+            description="The current code stops working immediately and a new one is shown once. Anyone who was given the old code will need the new one."
+            confirmLabel="Rotate code"
+            tone="danger"
+            action={rotateJoinCodeAction}
+            initialState={INITIAL_STATE}
+            payload={{ id: code.id }}
+            onCancel={() => setRotating(false)}
+            onSuccess={(state) => {
+              setRotating(false);
+              // A collapsed duplicate resolves with no plaintext — keep the
+              // code already on screen rather than blanking the reveal.
+              if (state.plaintext) onRotated(state.plaintext);
+            }}
+          />
           {code.active ? (
-            <Button type="button" variant="danger" onClick={deactivate} disabled={isPending}>
-              Deactivate
-            </Button>
+            <ActionButton<JoinCodeActionState>
+              action={deactivateJoinCodeAction}
+              initialState={INITIAL_STATE}
+              payload={{ id: code.id }}
+              label="Deactivate"
+              variant="danger"
+              onSuccess={() => show(`"${code.label}" deactivated`)}
+              onError={(message) => show(message, "error")}
+            />
           ) : null}
         </div>
       </td>

@@ -8,6 +8,7 @@ import {
   getHouseMissingMembers,
   getHousePendingMembers,
   getNationalPendingMembers,
+  VERIFICATION_QUEUE_LIMIT,
 } from "@/lib/repo";
 import { isEboardOrAdmin } from "@/lib/session";
 
@@ -44,17 +45,29 @@ export default async function AdminVerificationsPage() {
         Members are on the leaderboard as soon as they report Yes — this queue confirms claims after the fact.
       </p>
 
-      <VerificationQueue dues={dues} national={national} house={house} />
+      <VerificationQueue dues={dues.members} national={national.members} house={house.members} />
+
+      {/* The queues are capped rather than paginated — they drain as they're
+          worked, unlike the roster. The count says how much is left. */}
+      {dues.total > dues.members.length ||
+      national.total > national.members.length ||
+      house.total > house.members.length ? (
+        <p className="text-xs text-muted">
+          Showing the oldest {VERIFICATION_QUEUE_LIMIT} in each queue. Dues {dues.members.length} of {dues.total} ·
+          National {national.members.length} of {national.total} · House {house.members.length} of {house.total}. Clear
+          these and reload for the next batch.
+        </p>
+      ) : null}
 
       {/* The House tab can only show Houses that were actually submitted. An
           account that never answered the House step has nothing to review
           and would never appear anywhere — which is exactly how House-less
           accounts went unnoticed. Surfaced here, next to the queue an admin
           already works through, rather than left to be found by accident. */}
-      {houseMissing.length > 0 ? (
+      {houseMissing.total > 0 ? (
         <p className="rounded-lg border border-amber bg-amber/10 px-4 py-3 text-sm text-ink">
           <span className="font-semibold">
-            {houseMissing.length} account{houseMissing.length === 1 ? " has" : "s have"} no House on file.
+            {houseMissing.total} account{houseMissing.total === 1 ? " has" : "s have"} no House on file.
           </span>{" "}
           They&apos;re asked again at their next check-in and on their account page, but nothing here can review a House
           that was never submitted.{" "}

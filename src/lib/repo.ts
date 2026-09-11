@@ -68,6 +68,7 @@ import {
   isEligible,
   isGroupComplete,
   isOpen,
+  isMonthOver,
   memberPointsFor,
   memberTotal,
   monthlyChampions,
@@ -135,11 +136,15 @@ function permissionToDb(p: PermissionName): DbPermission {
   switch (p) {
     case "verifications_write":
       return DbPermission.VERIFICATIONS_WRITE;
+    case "attendance_write":
+      return DbPermission.ATTENDANCE_WRITE;
   }
 }
 
 function permissionFromDb(p: DbPermission): PermissionName {
   switch (p) {
+    case DbPermission.ATTENDANCE_WRITE:
+      return "attendance_write";
     case DbPermission.VERIFICATIONS_WRITE:
       return "verifications_write";
   }
@@ -1371,37 +1376,58 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
  * who claims again after a revoke comes back here as a new pending claim
  * rather than disappearing behind a stale decision.
  */
-export async function getDuesPendingMembers(orgId: string): Promise<Member[]> {
-  const rows = await prisma.user.findMany({
-    where: { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null },
-    orderBy: { duesReportedAt: "asc" },
-  });
-  return rows.map(userToMember);
+/**
+ * How many rows any one verification queue will render at once.
+ *
+ * The queues are capped rather than cursor-paginated like the roster, because
+ * they are a different shape of list: each one holds only OUTSTANDING claims
+ * and DRAINS as it is worked, where the roster only ever grows. A cap keeps a
+ * signup-rush spike from rendering hundreds of rows; the count beside it says
+ * how much is left, and the queue refills from the top as items are cleared.
+ */
+export const VERIFICATION_QUEUE_LIMIT = 100;
+
+export interface VerificationQueueResult {
+  members: Member[];
+  /** Everything outstanding, not just the capped page — so the page can say "100 of 214 waiting". */
+  total: number;
 }
 
-export async function getNationalPendingMembers(orgId: string): Promise<Member[]> {
-  const rows = await prisma.user.findMany({
-    where: { orgId, nationalMemberReported: true, nationalVerifiedAt: null, nationalRevokedAt: null },
-    orderBy: { createdAt: "asc" },
-  });
-  return rows.map(userToMember);
+export async function getDuesPendingMembers(orgId: string): Promise<VerificationQueueResult> {
+  const where = { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null };
+  const [rows, total] = await Promise.all([
+    prisma.user.findMany({ where, orderBy: { duesReportedAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
+    prisma.user.count({ where }),
+  ]);
+  return { members: rows.map(userToMember), total };
 }
 
-export async function getHousePendingMembers(orgId: string): Promise<Member[]> {
-  const rows = await prisma.user.findMany({
-    where: { orgId, house: { not: null }, houseVerifiedAt: null },
-    orderBy: { createdAt: "asc" },
-  });
-  return rows.map(userToMember);
+export async function getNationalPendingMembers(orgId: string): Promise<VerificationQueueResult> {
+  const where = { orgId, nationalMemberReported: true, nationalVerifiedAt: null, nationalRevokedAt: null };
+  const [rows, total] = await Promise.all([
+    prisma.user.findMany({ where, orderBy: { createdAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
+    prisma.user.count({ where }),
+  ]);
+  return { members: rows.map(userToMember), total };
+}
+
+export async function getHousePendingMembers(orgId: string): Promise<VerificationQueueResult> {
+  const where = { orgId, house: { not: null }, houseVerifiedAt: null };
+  const [rows, total] = await Promise.all([
+    prisma.user.findMany({ where, orderBy: { createdAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
+    prisma.user.count({ where }),
+  ]);
+  return { members: rows.map(userToMember), total };
 }
 
 /** Accounts with no House on file at all — the state getMissingFields re-asks for, surfaced so an admin can find them instead of discovering one by accident. ADMIN accounts are excluded: they never get a House step (see joinWizardRules.ts stepsFor) and getMissingFields never asks them for one, so listing them here would be noise, not a gap. */
-export async function getHouseMissingMembers(orgId: string): Promise<Member[]> {
-  const rows = await prisma.user.findMany({
-    where: { orgId, house: null, role: { not: DbRole.ADMIN } },
-    orderBy: { createdAt: "asc" },
-  });
-  return rows.map(userToMember);
+export async function getHouseMissingMembers(orgId: string): Promise<VerificationQueueResult> {
+  const where = { orgId, house: null, role: { not: DbRole.ADMIN } };
+  const [rows, total] = await Promise.all([
+    prisma.user.findMany({ where, orderBy: { createdAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
+    prisma.user.count({ where }),
+  ]);
+  return { members: rows.map(userToMember), total };
 }
 
 /**
@@ -2629,6 +2655,7 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
               ...(fullCore.studentId !== undefined ? { studentId: fullCore.studentId } : {}),
               ...(fullCore.phone !== undefined ? { phone: fullCore.phone } : {}),
               ...(fullCore.personalEmail !== undefined ? { personalEmail: fullCore.personalEmail } : {}),
+              ...(fullCore.tshirtSize !== undefined ? { tshirtSize: shirtSizeToDb(fullCore.tshirtSize) } : {}),
               // classification/major are only in the payload when
               // getMissingFields asked for them — omit the key entirely
               // otherwise so the existing (already-current-for-this-season)
@@ -3357,31 +3384,85 @@ export async function setPassword(orgId: string, email: string, plain: string): 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Double-submit protection for actions that must not run twice.
+//
+// A disabled confirm button is a UX affordance, not a guarantee: a slow
+// network plus an impatient admin still produces two requests. For an action
+// that GENERATES A CREDENTIAL that is not a cosmetic problem — the second
+// reset silently invalidates the setup code the first one just put on screen,
+// and the admin hands out a code that no longer works.
+//
+// So the client mints a requestToken per confirm-dialog opening (see
+// components/ui/ConfirmDialog.tsx) and the action claims it in the SAME
+// transaction as its work. Postgres' unique index does the rest: the second
+// transaction blocks on the index, fails, and rolls its own work back with it.
+// Concurrency-safe in a way an "was there a recent one?" SELECT is not.
+// ---------------------------------------------------------------------------
+
+/**
+ * Must be the FIRST statement in the transaction. A unique violation aborts
+ * the whole Postgres transaction (Prisma does not wrap statements in
+ * savepoints), which is precisely the desired behaviour: no claim, no work.
+ * Callers translate the thrown P2002 with isDuplicateRequest below.
+ */
+async function claimRequestToken(tx: Tx, orgId: string, scope: string, token: string, target?: string): Promise<void> {
+  await tx.requestClaim.create({ data: { orgId, scope, token, target: target ?? null } });
+}
+
+/** True when a transaction failed because its request token was already claimed — i.e. this submission is a repeat. */
+export function isDuplicateRequest(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") return false;
+  const meta = err.meta as { modelName?: string; target?: unknown } | undefined;
+  if (meta?.modelName === "RequestClaim") return true;
+  return JSON.stringify(meta?.target ?? "").includes("RequestClaim");
+}
+
 /**
  * Admin-initiated "forgot password": issues a fresh setup code (hashed into
  * passwordHash), flags mustChangePassword. There is no email-based reset — no
  * mail infrastructure is assumed to exist for every deployment of this app.
+ *
+ * Pass `requestToken` (the UI always does) to make a double-submit impossible
+ * rather than merely unlikely: two concurrent calls with the same token issue
+ * ONE code, and the loser throws DUPLICATE_REQUEST having changed nothing.
  */
-export async function resetPassword(orgId: string, email: string, actor: string): Promise<string> {
+export async function resetPassword(
+  orgId: string,
+  email: string,
+  actor: string,
+  options: { requestToken?: string } = {},
+): Promise<string> {
   const e = normalizeEmail(email);
   const setupCode = generateSetupCode();
   const passwordHash = await hashPassword(setupCode);
 
-  return prisma.$transaction(async (tx) => {
-    try {
-      await tx.user.update({
-        where: { orgId_email: { orgId, email: e } },
-        data: { passwordHash, mustChangePassword: true },
-      });
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
-        throw new AppError("NOT_FOUND", "Member not found");
+  try {
+    return await prisma.$transaction(async (tx) => {
+      if (options.requestToken) await claimRequestToken(tx, orgId, "reset_password", options.requestToken, e);
+      try {
+        await tx.user.update({
+          where: { orgId_email: { orgId, email: e } },
+          data: { passwordHash, mustChangePassword: true },
+        });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+          throw new AppError("NOT_FOUND", "Member not found");
+        }
+        throw err;
       }
-      throw err;
+      await logAdminAction(tx, orgId, { actor, action: "reset_password", target: e });
+      return setupCode;
+    });
+  } catch (err) {
+    if (isDuplicateRequest(err)) {
+      throw new AppError(
+        "DUPLICATE_REQUEST",
+        "That reset was already issued — the setup code already on screen is the current one.",
+      );
     }
-    await logAdminAction(tx, orgId, { actor, action: "reset_password", target: e });
-    return setupCode;
-  });
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3483,33 +3564,52 @@ export interface RotateJoinCodeResult {
 }
 
 /** Deactivates the old code and creates a fresh one with the same label/role/limits — the old plaintext was never stored, so there's nothing to "change", only replace. */
-export async function rotateJoinCodeById(orgId: string, id: string, actor: string): Promise<RotateJoinCodeResult> {
+export async function rotateJoinCodeById(
+  orgId: string,
+  id: string,
+  actor: string,
+  options: { requestToken?: string } = {},
+): Promise<RotateJoinCodeResult> {
   const existing = await prisma.joinCode.findFirst({ where: { id, orgId } });
   if (!existing) throw new AppError("NOT_FOUND", "Join code not found");
 
   const plaintext = generateSetupCode();
   const hash = await hashPassword(plaintext);
-  return prisma.$transaction(async (tx) => {
-    await tx.joinCode.update({ where: { id }, data: { active: false, rotatedAt: new Date() } });
-    const creator = await tx.user.findUnique({
-      where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
-      select: { id: true },
+
+  // Same guarantee as resetPassword above: the claim and the new code commit
+  // together, so two submissions of one confirmation rotate the code once.
+  try {
+    return await prisma.$transaction(async (tx) => {
+      if (options.requestToken) await claimRequestToken(tx, orgId, "rotate_join_code", options.requestToken, id);
+      await tx.joinCode.update({ where: { id }, data: { active: false, rotatedAt: new Date() } });
+      const creator = await tx.user.findUnique({
+        where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
+        select: { id: true },
+      });
+      const row = await tx.joinCode.create({
+        data: {
+          orgId,
+          code: hash,
+          codeHint: hintFor(plaintext),
+          grantsRole: existing.grantsRole,
+          label: existing.label,
+          expiresAt: existing.expiresAt,
+          maxUses: existing.maxUses,
+          createdById: creator?.id ?? null,
+        },
+      });
+      await logAdminAction(tx, orgId, { actor, action: "rotate_join_code", target: row.id, detail: existing.label });
+      return { summary: joinCodeToSummary(row), plaintext };
     });
-    const row = await tx.joinCode.create({
-      data: {
-        orgId,
-        code: hash,
-        codeHint: hintFor(plaintext),
-        grantsRole: existing.grantsRole,
-        label: existing.label,
-        expiresAt: existing.expiresAt,
-        maxUses: existing.maxUses,
-        createdById: creator?.id ?? null,
-      },
-    });
-    await logAdminAction(tx, orgId, { actor, action: "rotate_join_code", target: row.id, detail: existing.label });
-    return { summary: joinCodeToSummary(row), plaintext };
-  });
+  } catch (err) {
+    if (isDuplicateRequest(err)) {
+      throw new AppError(
+        "DUPLICATE_REQUEST",
+        "That rotation already happened — the code already on screen is the current one.",
+      );
+    }
+    throw err;
+  }
 }
 
 /** Internal shape used only by the matching/redemption functions below — never returned outside this module. */
@@ -4009,4 +4109,788 @@ export async function commitBulkImport(orgId: string, rows: BulkImportRow[], act
   });
 
   return { created, skipped: rows.length - created.length };
+}
+
+// ---------------------------------------------------------------------------
+// Attendance directory (/admin/attendance) — the event-centric view.
+//
+// The old page loaded every registration in the org and rendered one flat
+// list. These functions replace that with two scoped reads: a summary row per
+// event for the list, and one page of attendees for the ONE event actually
+// open. Nothing here ever loads every registration in the season.
+// ---------------------------------------------------------------------------
+
+export interface EventAttendanceSummary {
+  eventId: string;
+  name: string;
+  date: Date | null;
+  closesAt: Date | null;
+  status: EventStatus;
+  categoryName: string;
+  categoryShortName: string;
+  audience: Audience;
+  groupId: string | null;
+  attendeeCount: number;
+  /** Sum of Registration.pointsAwarded — the historical snapshot, which is what an officer auditing an event expects to see. */
+  totalPoints: number;
+  manualCount: number;
+}
+
+/**
+ * One row per event for the directory list, newest first. Two queries total
+ * (events, then a grouped aggregate over their registrations) regardless of
+ * how many events the season holds — never one count per event.
+ */
+export async function getEventAttendanceSummaries(orgId: string): Promise<EventAttendanceSummary[]> {
+  const events = await prisma.event.findMany({
+    where: { orgId },
+    include: EVENT_INCLUDE,
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+  });
+  if (events.length === 0) return [];
+
+  const eventIds = events.map((e) => e.id);
+  const [totals, manual] = await Promise.all([
+    prisma.registration.groupBy({
+      by: ["eventId"],
+      where: { eventId: { in: eventIds } },
+      _count: { _all: true },
+      _sum: { pointsAwarded: true },
+    }),
+    prisma.registration.groupBy({
+      by: ["eventId"],
+      where: { eventId: { in: eventIds }, source: DbSource.MANUAL },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const totalBy = new Map(totals.map((t) => [t.eventId, t]));
+  const manualBy = new Map(manual.map((m) => [m.eventId, m._count._all]));
+
+  return events.map((row) => {
+    const event = eventToDomain(row);
+    const agg = totalBy.get(event.eventId);
+    return {
+      eventId: event.eventId,
+      name: event.name,
+      date: event.date,
+      closesAt: event.closesAt,
+      status: event.status,
+      categoryName: event.category.name,
+      categoryShortName: event.category.shortName,
+      audience: event.audience,
+      groupId: event.groupId,
+      attendeeCount: agg?._count._all ?? 0,
+      totalPoints: agg?._sum.pointsAwarded ?? 0,
+      manualCount: manualBy.get(event.eventId) ?? 0,
+    };
+  });
+}
+
+export interface AttendeeRow {
+  registrationId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  classification: Classification | "";
+  house: string;
+  checkedInAt: Date | null;
+  pointsAwarded: number;
+  source: string;
+  note: string;
+}
+
+export interface AttendeePage {
+  rows: AttendeeRow[];
+  /** Opaque cursor for the next page, or null when this was the last one. */
+  nextCursor: string | null;
+  /** Every attendee matching the search, not just this page — see the note on getMembersPage. */
+  total: number;
+  totalPoints: number;
+}
+
+/**
+ * One page of an event's attendees, ordered by check-in time (the default the
+ * directory renders). Cursor-paginated on (createdAt, id): createdAt alone is
+ * not unique — two people checking in during the same second would make rows
+ * skip or repeat across pages — so id breaks the tie and makes the sort
+ * total.
+ */
+export async function getEventAttendees(
+  orgId: string,
+  eventId: string,
+  options: { q?: string; cursor?: string | null; limit?: number } = {},
+): Promise<AttendeePage> {
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
+  const q = (options.q ?? "").trim();
+
+  const where: Prisma.RegistrationWhereInput = {
+    eventId,
+    event: { orgId },
+    ...(q
+      ? {
+          user: {
+            OR: [
+              { firstName: { contains: q, mode: "insensitive" as const } },
+              { lastName: { contains: q, mode: "insensitive" as const } },
+              { email: { contains: q, mode: "insensitive" as const } },
+              { studentId: { contains: q, mode: "insensitive" as const } },
+            ],
+          },
+        }
+      : {}),
+  };
+
+  const [aggregate, rows] = await Promise.all([
+    prisma.registration.aggregate({ where, _count: { _all: true }, _sum: { pointsAwarded: true } }),
+    prisma.registration.findMany({
+      where,
+      include: { user: { select: { email: true, firstName: true, lastName: true, classification: true, house: true } } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    }),
+  ]);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  return {
+    rows: page.map((r) => ({
+      registrationId: r.id,
+      email: r.user.email,
+      firstName: r.user.firstName,
+      lastName: r.user.lastName,
+      classification: classificationFromDb(r.user.classification),
+      house: r.user.house ?? "",
+      checkedInAt: r.createdAt,
+      pointsAwarded: r.pointsAwarded,
+      source: r.source === DbSource.MANUAL ? "manual" : "form",
+      note: r.note ?? "",
+    })),
+    nextCursor: hasMore ? page[page.length - 1].id : null,
+    total: aggregate._count._all,
+    totalPoints: aggregate._sum.pointsAwarded ?? 0,
+  };
+}
+
+export interface AddableMember {
+  email: string;
+  firstName: string;
+  lastName: string;
+  studentId: string;
+  role: Role;
+}
+
+/**
+ * Members who could still be added to this event — everyone on the roster
+ * MINUS whoever is already registered. Excluding them in the query (rather
+ * than letting the picker offer them and the write reject them) is what makes
+ * the (eventId, userId) unique constraint a backstop instead of the primary
+ * mechanism; the constraint still fires if two admins pick the same person at
+ * once (see addManualAttendanceBulk).
+ */
+export async function getAddableMembers(
+  orgId: string,
+  eventId: string,
+  options: { q?: string; limit?: number } = {},
+): Promise<AddableMember[]> {
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 50);
+  const q = (options.q ?? "").trim();
+
+  const rows = await prisma.user.findMany({
+    where: {
+      orgId,
+      // GUEST accounts can never sign in and are not part of the roster an
+      // officer adds attendance for (see lib/joincodes.ts registerGuest).
+      role: { not: DbRole.GUEST },
+      registrations: { none: { eventId } },
+      ...(q
+        ? {
+            OR: [
+              { firstName: { contains: q, mode: "insensitive" as const } },
+              { lastName: { contains: q, mode: "insensitive" as const } },
+              { email: { contains: q, mode: "insensitive" as const } },
+              { studentId: { contains: q, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    },
+    select: { email: true, firstName: true, lastName: true, studentId: true, role: true },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    take: limit,
+  });
+
+  return rows.map((u) => ({
+    email: u.email,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    studentId: u.studentId ?? "",
+    role: roleFromDb(u.role),
+  }));
+}
+
+export interface ManualAddPreviewMember {
+  email: string;
+  name: string;
+  role: Role;
+  /** What this member will receive, computed by the SAME lib/points.ts memberPointsFor call a real check-in makes — see registerForEvent. */
+  points: number;
+  /** True when the role earns nothing on the member track (E-Board/Admin earn on the internal track instead — see memberPointsFor). */
+  zeroByRole: boolean;
+  /** Set when this event belongs to an EventGroup and adding them changes their NSBE Week bonus. */
+  groupBonusChange: { groupName: string; from: number; to: number } | null;
+}
+
+export interface ManualAddPreview {
+  eventName: string;
+  /** True once closesAt has passed — the normal case for a manual add, and worth saying out loud in the confirmation. */
+  eventClosed: boolean;
+  members: ManualAddPreviewMember[];
+  totalPoints: number;
+  /** The calendar month this event's attendance lands in ("2026-09"), or null when the event has no close time to bucket by. */
+  monthlyChampionMonth: string | null;
+  /** True when that month is still open, so a manual add can still change who wins it. */
+  monthlyChampionStillOpen: boolean;
+}
+
+/**
+ * What adding these members would do, computed before anything is written.
+ *
+ * Three things an officer cannot see from the picker alone, and all three can
+ * change the leaderboard:
+ *   - the points each member receives (0 for an officer, by role)
+ *   - an NSBE Week bonus crossing a tier because this event completes a set
+ *   - a still-open month whose Engagement Champion this could decide
+ */
+export async function previewManualAttendance(
+  orgId: string,
+  eventId: string,
+  emails: string[],
+  now: Date = new Date(),
+): Promise<ManualAddPreview> {
+  const normalized = [...new Set(emails.map((e) => normalizeEmail(e)))].filter(Boolean);
+
+  const eventRow = await prisma.event.findFirst({ where: { id: eventId, orgId }, include: EVENT_INCLUDE });
+  if (!eventRow) throw new AppError("NOT_FOUND", "Event not found");
+  const event = eventToDomain(eventRow);
+
+  const users = await prisma.user.findMany({
+    where: { orgId, email: { in: normalized } },
+    select: { id: true, email: true, firstName: true, lastName: true, role: true },
+  });
+
+  // The group this event belongs to, if any — needed to say whether the add
+  // moves anyone across a bonus tier.
+  const group = event.groupId ? await getEventGroup(orgId, event.groupId) : null;
+  const groupEvents = group
+    ? await prisma.event.findMany({ where: { orgId, groupId: event.groupId }, include: EVENT_INCLUDE })
+    : [];
+  const groupInput = group
+    ? {
+        events: groupEvents.map((e) => {
+          const d = eventToDomain(e);
+          return { eventId: d.eventId, status: d.status, closesAt: d.closesAt };
+        }),
+        bonusTiers: group.bonusTiers,
+        finalizedAt: group.finalizedAt,
+      }
+    : null;
+
+  // Every existing registration for these members inside the group — one
+  // query, not one per member.
+  const groupRegistrations = groupInput
+    ? await prisma.registration.findMany({
+        where: { userId: { in: users.map((u) => u.id) }, event: { orgId, groupId: event.groupId } },
+        select: { userId: true, eventId: true },
+      })
+    : [];
+
+  const members: ManualAddPreviewMember[] = users.map((u) => {
+    const role = roleFromDb(u.role);
+    const points = memberPointsFor({ role }, event, event.category);
+
+    let groupBonusChange: ManualAddPreviewMember["groupBonusChange"] = null;
+    if (groupInput && group) {
+      const mine = groupRegistrations.filter((r) => r.userId === u.id).map((r) => ({ eventId: r.eventId }));
+      const from = groupBonusFor(mine, groupInput, now);
+      const to = groupBonusFor([...mine, { eventId: event.eventId }], groupInput, now);
+      if (from !== to) groupBonusChange = { groupName: group.name, from, to };
+    }
+
+    return {
+      email: u.email,
+      name: memberDisplayName(u.firstName, u.lastName, u.email),
+      role,
+      points,
+      zeroByRole: role !== "general",
+      groupBonusChange,
+    };
+  });
+
+  const month = event.closesAt
+    ? `${event.closesAt.getFullYear()}-${String(event.closesAt.getMonth() + 1).padStart(2, "0")}`
+    : null;
+
+  return {
+    eventName: event.name,
+    eventClosed: event.closesAt !== null && event.closesAt.getTime() <= now.getTime(),
+    members,
+    totalPoints: members.reduce((sum, m) => sum + m.points, 0),
+    monthlyChampionMonth: month,
+    // A manual add still counts toward the Monthly Engagement Champion, so
+    // while the month is open this can change who wins it.
+    monthlyChampionStillOpen: month !== null && !isMonthOver(month, now),
+  };
+}
+
+export interface BulkManualAddResult {
+  added: string[];
+  /** Already registered — rejected by the (eventId, userId) unique constraint, never duplicated. */
+  alreadyRegistered: string[];
+  notFound: string[];
+  totalPoints: number;
+}
+
+/**
+ * Adds several members to one event in a single pass — the after-a-meeting
+ * case the directory exists for.
+ *
+ * Each member gets their own Registration (source MANUAL, note attached) and
+ * their own AdminLog row, so the audit trail names every person added and the
+ * reason. Standings are invalidated once at the end rather than per member.
+ *
+ * A member already registered is REPORTED, not duplicated and not fatal: an
+ * officer adding eight people after a meeting shouldn't lose the other seven
+ * because one of them had already checked in.
+ */
+export async function addManualAttendanceBulk(input: {
+  orgId: string;
+  eventId: string;
+  emails: string[];
+  note: string;
+  addedBy: string;
+  now?: Date;
+}): Promise<BulkManualAddResult> {
+  const { orgId, eventId } = input;
+  const note = input.note.trim();
+  if (!note) throw new AppError("VALIDATION_FAILED", "A note is required — say why this member is being added.");
+
+  const emails = [...new Set(input.emails.map((e) => normalizeEmail(e)))].filter(Boolean);
+  if (emails.length === 0) throw new AppError("VALIDATION_FAILED", "Select at least one member.");
+
+  const now = input.now ?? new Date();
+  const eventRow = await prisma.event.findFirst({ where: { id: eventId, orgId }, include: EVENT_INCLUDE });
+  if (!eventRow) throw new AppError("NOT_FOUND", "Event not found");
+  const event = eventToDomain(eventRow);
+
+  const users = await prisma.user.findMany({ where: { orgId, email: { in: emails } } });
+  const byEmail = new Map(users.map((u) => [u.email, u]));
+
+  const result: BulkManualAddResult = { added: [], alreadyRegistered: [], notFound: [], totalPoints: 0 };
+
+  for (const email of emails) {
+    const user = byEmail.get(email);
+    if (!user) {
+      result.notFound.push(email);
+      continue;
+    }
+    const role = roleFromDb(user.role);
+    const pointsAwarded = memberPointsFor({ role }, event, event.category);
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.registration.create({
+          data: {
+            eventId: event.eventId,
+            userId: user.id,
+            pointsAwarded,
+            roleAtTime: roleToDb(role),
+            source: DbSource.MANUAL,
+            note,
+            createdAt: now,
+          },
+        });
+        await logAdminAction(tx, orgId, {
+          actor: input.addedBy,
+          action: "add_attendance",
+          target: `${event.eventId}:${email}`,
+          detail: note,
+        });
+      });
+      result.added.push(email);
+      result.totalPoints += pointsAwarded;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        result.alreadyRegistered.push(email);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (result.added.length > 0) {
+    invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+  }
+  return result;
+}
+
+export interface RemoveRegistrationImpact {
+  email: string;
+  name: string;
+  eventName: string;
+  /** The points this registration contributed, which the member loses. */
+  pointsLost: number;
+  /** Set when the event is in an EventGroup and removing it drops them a bonus tier. */
+  groupBonusChange: { groupName: string; from: number; to: number } | null;
+}
+
+/** What removing this registration would cost the member — shown in the confirmation BEFORE it happens, because removal changes a leaderboard total. */
+export async function previewRemoveRegistration(
+  orgId: string,
+  registrationId: string,
+  now: Date = new Date(),
+): Promise<RemoveRegistrationImpact> {
+  const row = await prisma.registration.findFirst({
+    where: { id: registrationId, event: { orgId } },
+    include: {
+      user: { select: { id: true, email: true, firstName: true, lastName: true } },
+      event: { include: EVENT_INCLUDE },
+    },
+  });
+  if (!row) throw new AppError("NOT_FOUND", "Attendance record not found");
+  const event = eventToDomain(row.event);
+
+  let groupBonusChange: RemoveRegistrationImpact["groupBonusChange"] = null;
+  if (event.groupId) {
+    const group = await getEventGroup(orgId, event.groupId);
+    if (group) {
+      const groupEvents = await prisma.event.findMany({
+        where: { orgId, groupId: event.groupId },
+        include: EVENT_INCLUDE,
+      });
+      const groupInput = {
+        events: groupEvents.map((e) => {
+          const d = eventToDomain(e);
+          return { eventId: d.eventId, status: d.status, closesAt: d.closesAt };
+        }),
+        bonusTiers: group.bonusTiers,
+        finalizedAt: group.finalizedAt,
+      };
+      const mine = await prisma.registration.findMany({
+        where: { userId: row.user.id, event: { orgId, groupId: event.groupId } },
+        select: { eventId: true },
+      });
+      const from = groupBonusFor(mine, groupInput, now);
+      const to = groupBonusFor(
+        mine.filter((r) => r.eventId !== event.eventId),
+        groupInput,
+        now,
+      );
+      if (from !== to) groupBonusChange = { groupName: group.name, from, to };
+    }
+  }
+
+  return {
+    email: row.user.email,
+    name: memberDisplayName(row.user.firstName, row.user.lastName, row.user.email),
+    eventName: event.name,
+    pointsLost: row.pointsAwarded,
+    groupBonusChange,
+  };
+}
+
+/** Removal with a required reason — the reason lands in AdminLog, because this silently lowers someone's standing. */
+export async function removeRegistration(
+  orgId: string,
+  registrationId: string,
+  reason: string,
+  actor: string,
+): Promise<void> {
+  const trimmed = reason.trim();
+  if (!trimmed) throw new AppError("VALIDATION_FAILED", "A reason is required to remove a registration.");
+
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.registration.findFirst({
+      where: { id: registrationId, event: { orgId } },
+      include: { user: { select: { email: true } } },
+    });
+    if (!row) throw new AppError("NOT_FOUND", "Attendance record not found");
+    await tx.registration.delete({ where: { id: registrationId } });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "delete_attendance",
+      target: `${row.eventId}:${row.user.email}`,
+      detail: `${row.pointsAwarded} pts removed — ${trimmed}`,
+    });
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+}
+
+/** Point correction on one registration, reason required and logged with the before/after values. */
+export async function updateRegistrationPoints(
+  orgId: string,
+  registrationId: string,
+  points: number,
+  reason: string,
+  actor: string,
+): Promise<void> {
+  const trimmed = reason.trim();
+  if (!trimmed) throw new AppError("VALIDATION_FAILED", "A reason is required to change points.");
+  if (!Number.isInteger(points) || points < 0) {
+    throw new AppError("VALIDATION_FAILED", "Points must be a whole number, zero or more.");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.registration.findFirst({
+      where: { id: registrationId, event: { orgId } },
+      include: { user: { select: { email: true } } },
+    });
+    if (!row) throw new AppError("NOT_FOUND", "Attendance record not found");
+    await tx.registration.update({ where: { id: registrationId }, data: { pointsAwarded: points } });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "update_attendance_points",
+      target: `${row.eventId}:${row.user.email}`,
+      detail: `${row.pointsAwarded} → ${points} — ${trimmed}`,
+    });
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+}
+
+// ---------------------------------------------------------------------------
+// Paginated roster (/admin/members).
+//
+// getMembersWithStats above loads every member, every registration, every auth
+// record and the whole AdminLog to render one page. That is fine at 40 members
+// and unusable at 200+, so the roster uses the three functions below instead:
+// filtered COUNT queries for the summaries, and a filtered, cursor-paginated
+// page of rows whose derived fields are computed for THAT PAGE only.
+//
+// The filters live in SQL rather than in a .filter() over a preloaded array
+// precisely so they describe the whole roster: searching for a name has to
+// find someone who isn't on the loaded page, and the summary counts have to
+// cover all 213 matching members, not the 20 on screen.
+// ---------------------------------------------------------------------------
+
+export type MemberTriFilter = "all" | "yes" | "no";
+export type MemberHouseFilter = "all" | "verified" | "pending" | "missing";
+
+export interface MemberFilters {
+  q?: string;
+  role?: Role | "all";
+  status?: UserStatus | "all";
+  classification?: Classification | "all";
+  major?: string;
+  eligible?: MemberTriFilter;
+  dues?: MemberTriFilter;
+  national?: MemberTriFilter;
+  house?: MemberHouseFilter;
+  resume?: MemberTriFilter;
+  /** A specific size, "none" for members who have never given one, or "all". */
+  tshirt?: string;
+}
+
+/** yes -> the condition; no -> its negation; all -> nothing at all. */
+function tri(filter: MemberTriFilter | undefined, yes: Prisma.UserWhereInput): Prisma.UserWhereInput[] {
+  if (filter === "yes") return [yes];
+  if (filter === "no") return [{ NOT: yes }];
+  return [];
+}
+
+/**
+ * The ONE translation of the roster's filter bar into SQL. Both the page query
+ * and the aggregate queries build from this, so a member counted in the
+ * summary is exactly a member who would appear in the list.
+ *
+ * `currentSeason` is needed because eligibility is not a column — it is
+ * lib/points.ts isEligible's three conditions, which are all columns, so the
+ * filter can live in the query rather than forcing every member to be loaded
+ * and tested in memory.
+ */
+function memberWhere(orgId: string, filters: MemberFilters, currentSeason: string): Prisma.UserWhereInput {
+  const q = (filters.q ?? "").trim();
+  const and: Prisma.UserWhereInput[] = [];
+
+  if (filters.role && filters.role !== "all") and.push({ role: roleToDb(filters.role) });
+  if (filters.status && filters.status !== "all") and.push({ status: statusToDb(filters.status) });
+  if (filters.classification && filters.classification !== "all") {
+    and.push({ classification: classificationToDb(filters.classification) });
+  }
+  if (filters.major && filters.major !== "all") and.push({ major: filters.major });
+
+  // isEligible's exact conditions. An unset Config.SEASON matches nobody,
+  // mirroring the Boolean(currentSeason) guard in lib/points.ts rather than
+  // letting "" match a member who has never reported anything.
+  const eligibleWhere: Prisma.UserWhereInput = currentSeason
+    ? { duesPaidReported: true, nationalMemberReported: true, membershipSeason: currentSeason }
+    : { id: { in: [] } };
+  and.push(...tri(filters.eligible, eligibleWhere));
+
+  // Dues/National filter on the CLAIM, not on verification — unchanged from
+  // the old in-memory filter.
+  and.push(...tri(filters.dues, { duesPaidReported: true }));
+  and.push(...tri(filters.national, { nationalMemberReported: true }));
+  and.push(...tri(filters.resume, { resumeFileId: { not: null } }));
+
+  if (filters.house === "verified") and.push({ houseVerifiedAt: { not: null } });
+  else if (filters.house === "pending") and.push({ houseVerifiedAt: null, house: { not: null } });
+  else if (filters.house === "missing") and.push({ houseVerifiedAt: null, OR: [{ house: null }, { house: "" }] });
+
+  if (filters.tshirt === "none") and.push({ tshirtSize: null });
+  else if (filters.tshirt && filters.tshirt !== "all") {
+    and.push({ tshirtSize: shirtSizeToDb(filters.tshirt as ShirtSize) });
+  }
+
+  if (q) {
+    and.push({
+      OR: [
+        { firstName: { contains: q, mode: "insensitive" } },
+        { lastName: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+        { studentId: { contains: q, mode: "insensitive" } },
+        { nsbeMembershipId: { contains: q, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  return { orgId, AND: and };
+}
+
+export interface MemberAggregates {
+  /** Every member matching the filters — the "of 213" in "Showing 20 of 213". */
+  total: number;
+  eligible: number;
+}
+
+/**
+ * The summary numbers, computed over the WHOLE filtered set with aggregate
+ * queries — never from the rows on screen. A count built from one loaded page
+ * looks authoritative and is wrong, so this deliberately cannot see the page.
+ */
+export async function getMemberAggregates(orgId: string, filters: MemberFilters): Promise<MemberAggregates> {
+  const currentSeason = await getConfigValue(orgId, "SEASON", "");
+  const where = memberWhere(orgId, filters, currentSeason);
+
+  const [total, eligible] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.count({
+      where: currentSeason
+        ? { AND: [where, { duesPaidReported: true, nationalMemberReported: true, membershipSeason: currentSeason }] }
+        : { AND: [where, { id: { in: [] } }] },
+    }),
+  ]);
+
+  return { total, eligible };
+}
+
+export interface MembersPage {
+  rows: MemberWithStats[];
+  /** Opaque cursor for the next page, or null when this page was the last. */
+  nextCursor: string | null;
+}
+
+/**
+ * One page of the filtered roster.
+ *
+ * Ordered by (lastName, firstName, id). The id is not decoration: lastName and
+ * firstName are not unique, and a cursor over a non-total ordering silently
+ * skips or repeats rows when two members share a name. Ending the sort on a
+ * unique column makes the order total, which is what makes the cursor stable
+ * even if someone is added to the roster mid-session.
+ *
+ * Every derived field (points, events, account state, last active) is computed
+ * for the members ON THIS PAGE only — the whole point of the rewrite is that
+ * nothing here scales with the size of the roster.
+ */
+export async function getMembersPage(
+  orgId: string,
+  filters: MemberFilters,
+  options: { cursor?: string | null; limit?: number } = {},
+): Promise<MembersPage> {
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
+  const currentSeason = await getConfigValue(orgId, "SEASON", "");
+  const where = memberWhere(orgId, filters, currentSeason);
+
+  const rows = await prisma.user.findMany({
+    where,
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
+    take: limit + 1,
+    ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+  });
+
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const members = pageRows.map(userToMember);
+  const emails = members.map((m) => m.email);
+
+  if (members.length === 0) return { rows: [], nextCursor: null };
+
+  // Scoped to this page's members, never the whole org.
+  const [registrations, authRows, logRows] = await Promise.all([
+    prisma.registration.findMany({
+      where: { event: { orgId }, user: { orgId, email: { in: emails } } },
+      select: { pointsAwarded: true, createdAt: true, user: { select: { email: true } } },
+    }),
+    prisma.user.findMany({
+      where: { orgId, email: { in: emails } },
+      select: { email: true, passwordHash: true, role: true, mustChangePassword: true, status: true },
+    }),
+    prisma.adminLog.findMany({
+      where: { orgId, target: { in: emails } },
+      include: { actor: { select: { email: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  const totalsByEmail = new Map<string, { points: number; events: number }>();
+  const lastAttendanceByEmail = new Map<string, Date>();
+  for (const r of registrations) {
+    const email = r.user.email;
+    const entry = totalsByEmail.get(email) ?? { points: 0, events: 0 };
+    entry.points += r.pointsAwarded;
+    entry.events += 1;
+    totalsByEmail.set(email, entry);
+    if (r.createdAt) {
+      const existing = lastAttendanceByEmail.get(email);
+      if (!existing || r.createdAt > existing) lastAttendanceByEmail.set(email, r.createdAt);
+    }
+  }
+
+  const log = logRows.map(adminLogToDomain);
+  const lastLogByEmail = new Map<string, Date>();
+  for (const entry of log) {
+    const key = normalizeEmail(entry.target);
+    if (!lastLogByEmail.has(key) && entry.timestamp) lastLogByEmail.set(key, entry.timestamp);
+  }
+  const authByEmail = new Map(authRows.map((a) => [a.email, userToAuthRecord(a as never)]));
+  const nameById = new Map(members.map((m) => [m.id, memberDisplayName(m.firstName, m.lastName, m.email)]));
+
+  const withStats = await Promise.all(
+    members.map(async (m) => {
+      const totals = totalsByEmail.get(m.email);
+      const accountState = await getAccountState(m.email, authByEmail.get(m.email) ?? null, log);
+      const houseState: MemberWithStats["houseState"] = m.houseVerifiedAt ? "verified" : m.house ? "pending" : "none";
+      const lastAttended = lastAttendanceByEmail.get(m.email) ?? null;
+      const lastLogged = lastLogByEmail.get(normalizeEmail(m.email)) ?? null;
+      const lastActiveAt =
+        lastAttended && lastLogged ? (lastAttended > lastLogged ? lastAttended : lastLogged) : lastAttended ?? lastLogged;
+
+      return {
+        ...m,
+        points: totals?.points ?? 0,
+        events: totals?.events ?? 0,
+        accountState,
+        eligible: isEligible(m, currentSeason),
+        duesState: claimState(m.duesPaidReported, m.duesVerifiedAt, m.duesRevokedAt),
+        nationalState: claimState(m.nationalMemberReported, m.nationalVerifiedAt, m.nationalRevokedAt),
+        duesVerifiedByName: nameById.get(m.duesVerifiedById) ?? "",
+        nationalVerifiedByName: nameById.get(m.nationalVerifiedById) ?? "",
+        houseState,
+        lastActiveAt,
+      } satisfies MemberWithStats;
+    }),
+  );
+
+  return { rows: withStats, nextCursor: hasMore ? pageRows[pageRows.length - 1].id : null };
 }

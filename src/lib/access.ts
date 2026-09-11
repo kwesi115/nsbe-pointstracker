@@ -31,7 +31,38 @@ import type { Denial, FeatureName, PermissionName, Role } from "./types";
 /** Member-facing name for a grant — what the access-denied page tells someone to ask for. Matches the label on the member detail page's Permissions panel. */
 export const PERMISSION_LABEL: Record<PermissionName, string> = {
   verifications_write: "Membership audit",
+  attendance_write: "Attendance editing",
 };
+
+/**
+ * Which roles hold each capability OUTRIGHT, with no grant.
+ *
+ * This is the difference between a capability that is ordinary officer work
+ * and one that isn't:
+ *
+ *   verifications_write  EBOARD and ADMIN. Reviewing a dues receipt is what
+ *                        officers do; requiring a grant for it would mean
+ *                        granting it to every officer on day one.
+ *
+ *   attendance_write     ADMIN only. Adding someone to a CLOSED event awards
+ *                        points, as does re-pointing or removing a
+ *                        registration — it changes the leaderboard after the
+ *                        window shut. Keeping EBOARD out by default is the
+ *                        entire reason "an officer with read-only attendance
+ *                        access" is an expressible state rather than a
+ *                        comment: every officer can read the directory, and
+ *                        only an admin, or an officer explicitly granted
+ *                        this, can change what it says.
+ */
+const PERMISSION_ROLES: Record<PermissionName, readonly Role[]> = {
+  verifications_write: ["admin", "eboard"],
+  attendance_write: ["admin"],
+};
+
+/** True when `role` holds `permission` by virtue of the role alone. The one implementation — lib/permissions.ts defers to it rather than re-deriving a role comparison. */
+export function roleHoldsPermission(role: Role, permission: PermissionName): boolean {
+  return PERMISSION_ROLES[permission].includes(role);
+}
 
 /**
  * What a surface demands. `level` is the role/grant floor; `feature` is an
@@ -55,9 +86,10 @@ export interface AdminAccess {
 /**
  * null when the caller may proceed, otherwise WHY not.
  *
- * ADMIN and EBOARD hold every capability a grant could give, so they satisfy a
- * "permission" requirement without the grant — the same short-circuit
- * lib/permissions.ts has always applied.
+ * A "permission" requirement is satisfied either by holding the grant or by a
+ * role that holds that capability outright — see PERMISSION_ROLES, which is
+ * deliberately NOT "admin and eboard pass everything": attendance_write is
+ * ADMIN-only precisely so an officer can have read-without-write.
  */
 export function denialFor(access: AdminAccess, requirement: Requirement): Denial | null {
   const isAdminRole = access.role === "admin";
@@ -71,7 +103,10 @@ export function denialFor(access: AdminAccess, requirement: Requirement): Denial
       if (!isEboardRole) return { kind: "eboard" };
       break;
     case "permission":
-      if (!isEboardRole && !access.permissions.includes(requirement.permission)) {
+      if (
+        !roleHoldsPermission(access.role, requirement.permission) &&
+        !access.permissions.includes(requirement.permission)
+      ) {
         return { kind: "permission", permission: requirement.permission };
       }
       break;

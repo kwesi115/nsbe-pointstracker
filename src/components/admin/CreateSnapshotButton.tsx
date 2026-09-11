@@ -1,12 +1,13 @@
 "use client";
 
-import { useTransition } from "react";
 import { Camera } from "lucide-react";
-import Button from "@/components/ui/Button";
+import { createSnapshotFormAction, type CreateSnapshotResult } from "@/app/(member)/admin/exports/actions";
+import ActionButton from "@/components/ui/ActionButton";
 import { useToast } from "@/components/ui/Toast";
-import { createSnapshotAction } from "@/app/(member)/admin/exports/actions";
 
-/** Layer 2's manual trigger (see docs/RECOVERY.md) — also reusable as the "snapshot before a destructive action" prompt (see MemberImport.tsx), which passes its own `reason` and doesn't render this default label. */
+const INITIAL_STATE: CreateSnapshotResult = { error: null };
+
+/** Layer 2's manual trigger (see docs/RECOVERY.md) — also reusable as the "snapshot before a destructive action" prompt, which passes its own `reason` and doesn't render this default label. */
 export default function CreateSnapshotButton({
   label = "Create season snapshot",
   reason,
@@ -17,25 +18,28 @@ export default function CreateSnapshotButton({
   onDone?: () => void;
 }) {
   const { show } = useToast();
-  const [isPending, startTransition] = useTransition();
 
   return (
-    <Button
-      type="button"
+    <ActionButton<CreateSnapshotResult>
+      action={createSnapshotFormAction}
+      initialState={INITIAL_STATE}
+      payload={{ reason }}
       variant="secondary"
-      disabled={isPending}
-      onClick={() =>
-        startTransition(async () => {
-          const result = await createSnapshotAction(reason);
-          if (result.error) show(result.error, "error");
-          else {
-            show("Snapshot created");
-            onDone?.();
-          }
-        })
+      label={
+        <>
+          <Camera size={16} aria-hidden="true" /> {label}
+        </>
       }
-    >
-      <Camera size={16} aria-hidden="true" /> {isPending ? "Creating…" : label}
-    </Button>
+      pendingLabel={
+        <>
+          <Camera size={16} aria-hidden="true" /> Creating…
+        </>
+      }
+      onSuccess={() => {
+        show("Snapshot created");
+        onDone?.();
+      }}
+      onError={(message) => show(message, "error")}
+    />
   );
 }
