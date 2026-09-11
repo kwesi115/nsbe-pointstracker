@@ -1,12 +1,15 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../../../_components/AccessDenied";
 import { notFound } from "next/navigation";
 import { Download } from "lucide-react";
 import GameBonusAward from "@/components/admin/GameBonusAward";
 import ResponsesTable from "@/components/admin/ResponsesTable";
 import { getEvent, getEventResponses, getFormFields } from "@/lib/repo";
-import { requireEboard } from "@/lib/session";
 
 export default async function EventResponsesPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requireEboard();
+  const guard = await guardAdminPage({ level: "eboard" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const orgId = session.user.orgId;
   const { id } = await params;
   const event = await getEvent(orgId, id);
@@ -23,12 +26,15 @@ export default async function EventResponsesPage({ params }: { params: Promise<{
         </div>
         <div className="flex items-center gap-2">
           <GameBonusAward eventId={id} responses={responses} />
-          <a
-            href={`/api/admin/export/event/${id}/csv`}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
-          >
-            <Download size={16} aria-hidden="true" /> Export CSV
-          </a>
+          {/* Same flag that gates the endpoint behind it — see lib/features.ts. */}
+          {guard.access.features.exports ? (
+            <a
+              href={`/api/admin/export/event/${id}/csv`}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            >
+              <Download size={16} aria-hidden="true" /> Export CSV
+            </a>
+          ) : null}
         </div>
       </div>
 

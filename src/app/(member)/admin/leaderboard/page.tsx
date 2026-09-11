@@ -1,10 +1,11 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import { Download } from "lucide-react";
 import AdminNav from "@/components/admin/AdminNav";
 import Badge from "@/components/ui/Badge";
 import { inputClass, selectClass } from "@/components/ui/Field";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { getEboardBoardRows, type EboardCategory } from "@/lib/repo";
-import { requireEboardForbidden } from "@/lib/session";
 
 const CATEGORY_LABEL: Record<EboardCategory, string> = {
   chapter: "Chapter events",
@@ -23,7 +24,9 @@ export default async function AdminLeaderboardPage({
 }) {
   // A real 403 for below-EBOARD (next/navigation forbidden(), see next.config.ts
   // authInterrupts) — not merely un-linked from member-facing nav.
-  const session = await requireEboardForbidden();
+  const guard = await guardAdminPage({ level: "eboard" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
 
   const { from, to, category } = await searchParams;
   const validCategory: EboardCategory | undefined =
@@ -47,7 +50,7 @@ export default async function AdminLeaderboardPage({
           split tells you they&apos;ve made every GBM and skipped every meeting.
         </p>
       </div>
-      <AdminNav active="/admin/leaderboard" />
+      <AdminNav active="/admin/leaderboard" access={guard.access} />
 
       <form className="flex flex-wrap items-end gap-3" method="get">
         <label className="flex flex-col gap-1 text-xs font-medium text-muted">
@@ -70,12 +73,15 @@ export default async function AdminLeaderboardPage({
         <button type="submit" className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken">
           Apply
         </button>
-        <a
-          href="/api/admin/export/eboard-leaderboard/csv"
-          className="ml-auto inline-flex min-h-11 items-center gap-2 rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
-        >
-          <Download size={16} aria-hidden="true" /> Export CSV
-        </a>
+        {/* Same flag that gates the endpoint behind it — see lib/features.ts. */}
+        {guard.access.features.exports ? (
+          <a
+            href="/api/admin/export/eboard-leaderboard/csv"
+            className="ml-auto inline-flex min-h-11 items-center gap-2 rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+          >
+            <Download size={16} aria-hidden="true" /> Export CSV
+          </a>
+        ) : null}
       </form>
 
       {rows.length === 0 ? (

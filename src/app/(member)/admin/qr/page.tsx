@@ -1,11 +1,13 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import { Download } from "lucide-react";
 import AdminNav from "@/components/admin/AdminNav";
 import Card from "@/components/ui/Card";
 import { eventsQrSvg, eventsUrl } from "@/lib/qr";
-import { requireEboard } from "@/lib/session";
 
 export default async function AdminQrPage() {
-  await requireEboard();
+  const guard = await guardAdminPage({ level: "eboard" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
   const [svg, url] = await Promise.all([eventsQrSvg(), Promise.resolve(eventsUrl())]);
 
   return (
@@ -17,7 +19,7 @@ export default async function AdminQrPage() {
         </p>
       </div>
       <div className="print:hidden">
-        <AdminNav active="/admin/qr" />
+        <AdminNav active="/admin/qr" access={guard.access} />
       </div>
 
       <Card className="flex flex-col items-center gap-4 text-center">

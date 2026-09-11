@@ -1,3 +1,5 @@
+import type { Denial } from "./types";
+
 export type ErrorCode =
   | "UNAUTHENTICATED"
   | "FORBIDDEN"
@@ -31,12 +33,26 @@ export interface AppErrorOptions {
   fieldErrors?: Record<string, string>;
   status?: number;
   cause?: unknown;
+  denial?: Denial;
 }
 
 export class AppError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
   readonly fieldErrors?: Record<string, string>;
+  /**
+   * On a FORBIDDEN, WHICH requirement the caller missed — set by the guards in
+   * lib/access.ts so a Server Action or a Route Handler can report the specific
+   * reason ("requires the Membership audit permission") rather than a generic
+   * "admin access required".
+   *
+   * Deliberately NOT relied on by any error boundary: Next.js strips the
+   * message and every custom property off a Server Component error before it
+   * reaches error.tsx in production, so a boundary would always see this as
+   * undefined there. Pages carry the denial as a value instead — see
+   * lib/access.ts guardAdminPage.
+   */
+  readonly denial?: Denial;
 
   constructor(code: ErrorCode, message?: string, options?: AppErrorOptions) {
     super(message ?? code, options?.cause !== undefined ? { cause: options.cause } : undefined);
@@ -44,6 +60,7 @@ export class AppError extends Error {
     this.code = code;
     this.status = options?.status ?? STATUS_BY_CODE[code];
     if (options?.fieldErrors) this.fieldErrors = options.fieldErrors;
+    if (options?.denial) this.denial = options.denial;
     Object.setPrototypeOf(this, AppError.prototype);
   }
 }

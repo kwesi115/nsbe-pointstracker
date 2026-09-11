@@ -11,6 +11,28 @@ export type Role = "admin" | "eboard" | "general" | "guest";
 /** A narrow, revocable capability grantable to one member independent of role — see lib/permissions.ts and prisma/schema.prisma's PermissionGrant. */
 export type PermissionName = "verifications_write";
 
+/**
+ * WHY a caller was turned away from an admin surface — the shape lib/access.ts
+ * builds, AppError carries, and admin/_components/AccessDenied.tsx renders copy
+ * for. Deliberately a discriminated union rather than a bare boolean: the page
+ * has to be able to say WHICH requirement was missed ("requires the Membership
+ * audit permission") instead of a generic "admin-only", which is the whole
+ * point of Part 2.
+ *
+ * "feature" is not a permission failure at all — the surface exists and the
+ * caller may well be allowed to use it, but it is switched off org-wide by a
+ * Config flag (see lib/features.ts). It renders the same calm page because to
+ * the person clicking, the outcome is identical: this isn't for you right now.
+ */
+export type Denial =
+  | { kind: "admin" }
+  | { kind: "eboard" }
+  | { kind: "permission"; permission: PermissionName }
+  | { kind: "feature"; feature: FeatureName };
+
+/** An org-wide on/off switch stored in Config and toggled from /admin/settings — see lib/features.ts. */
+export type FeatureName = "exports";
+
 export type ShirtSize = "XS" | "S" | "M" | "L" | "XL" | "XXL" | "XXXL";
 
 /** EBOARD_ONLY events never appear in the member feed or member leaderboard — see lib/points.ts eboardAwardFor. */

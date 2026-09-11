@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { normalizeEmail } from "@/lib/email";
+import { configKeyFor } from "@/lib/features";
 import { AppError } from "@/lib/errors";
 import { codeFromName, serializeHouses, type House } from "@/lib/houses";
 import { DEFAULT_LEADERBOARD_DISCLAIMER, DEFAULT_NATIONAL_MEMBERSHIP_URL, setConfigValue } from "@/lib/repo";
@@ -134,6 +135,29 @@ export async function updateEboardSettingsAction(_prevState: SettingsState, form
       setConfigValue(orgId, "EBOARD_REQUIRES_MEMBERSHIP", requiresMembership, session.user.email),
     ]);
     revalidatePath("/admin/settings");
+    return { error: null };
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+}
+
+/**
+ * The org-wide exports switch — see lib/features.ts. ADMIN-only like every
+ * other action on this page, and written through setConfigValue so the flip
+ * lands in the AdminLog: "exports were off for three weeks" should be
+ * answerable from the audit trail, not from memory.
+ */
+export async function updateExportsSettingsAction(_prevState: SettingsState, formData: FormData): Promise<SettingsState> {
+  const session = await requireAdmin();
+  const enabled = formData.get("exportsEnabled") === "on" ? "true" : "false";
+
+  try {
+    await setConfigValue(session.user.orgId, configKeyFor("exports"), enabled, session.user.email);
+    revalidatePath("/admin/settings");
+    // The nav item and every "Export CSV" affordance read this flag at render
+    // time, so the admin pages showing them have to be rebuilt too.
+    revalidatePath("/admin", "layout");
     return { error: null };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };

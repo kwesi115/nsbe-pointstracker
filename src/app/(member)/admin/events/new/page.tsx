@@ -1,10 +1,13 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../../_components/AccessDenied";
 import { createEventAction } from "@/app/(member)/admin/events/actions";
 import EventForm from "@/components/admin/EventForm";
 import { getConfigValue, getEventCategories, getEventGroups } from "@/lib/repo";
-import { requireEboard } from "@/lib/session";
 
 export default async function NewEventPage() {
-  const session = await requireEboard();
+  const guard = await guardAdminPage({ level: "eboard" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const [categories, groups, defaultDuration] = await Promise.all([
     getEventCategories(session.user.orgId),
     getEventGroups(session.user.orgId),

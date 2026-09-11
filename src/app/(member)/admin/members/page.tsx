@@ -1,10 +1,11 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import AddMemberForm from "@/components/admin/AddMemberForm";
 import AdminNav from "@/components/admin/AdminNav";
 import MemberImport from "@/components/admin/MemberImport";
 import MembersFilterBar from "@/components/admin/MembersFilterBar";
 import MembersTable from "@/components/admin/MembersTable";
 import { getCoreFormConfig, getMembersWithStats, type MemberWithStats } from "@/lib/repo";
-import { requireAdmin } from "@/lib/session";
 import type { Classification, Role, UserStatus } from "@/lib/types";
 
 type TriState = "all" | "yes" | "no";
@@ -91,7 +92,9 @@ function filterMembers(members: MemberWithStats[], params: MembersSearchParams):
 }
 
 export default async function AdminMembersPage({ searchParams }: { searchParams: Promise<MembersSearchParams> }) {
-  const session = await requireAdmin();
+  const guard = await guardAdminPage({ level: "admin" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const params = await searchParams;
   const [members, coreFormConfig] = await Promise.all([
     getMembersWithStats(session.user.orgId),
@@ -107,7 +110,7 @@ export default async function AdminMembersPage({ searchParams }: { searchParams:
           {filtered.length} of {members.length} on the roster
         </p>
       </div>
-      <AdminNav active="/admin/members" />
+      <AdminNav active="/admin/members" access={guard.access} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Add a member</h2>
@@ -122,7 +125,7 @@ export default async function AdminMembersPage({ searchParams }: { searchParams:
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Roster</h2>
         <MembersFilterBar majors={coreFormConfig.majors} />
-        <MembersTable members={filtered} houses={coreFormConfig.houses} />
+        <MembersTable members={filtered} houses={coreFormConfig.houses} exportsEnabled={guard.access.features.exports} />
       </section>
     </main>
   );

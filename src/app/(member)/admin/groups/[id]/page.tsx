@@ -1,11 +1,14 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../../_components/AccessDenied";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import GroupDetail from "@/components/admin/GroupDetail";
 import { getEventGroup, getEvents, getGroupAttendanceMatrix } from "@/lib/repo";
-import { requireAdmin } from "@/lib/session";
 
 export default async function GroupDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requireAdmin();
+  const guard = await guardAdminPage({ level: "admin" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const { id } = await params;
   const orgId = session.user.orgId;
 

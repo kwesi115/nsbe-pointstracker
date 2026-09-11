@@ -1,11 +1,14 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../../../_components/AccessDenied";
 import { notFound } from "next/navigation";
 import CoreFormPreview from "@/components/admin/CoreFormPreview";
 import FormBuilder from "@/components/admin/FormBuilder";
 import { getConfigValue, getEvent, getEvents, getFormFields, hasEventResponses } from "@/lib/repo";
-import { requireEboard } from "@/lib/session";
 
 export default async function EventQuestionsPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requireEboard();
+  const guard = await guardAdminPage({ level: "eboard" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const orgId = session.user.orgId;
   const { id } = await params;
   const event = await getEvent(orgId, id);

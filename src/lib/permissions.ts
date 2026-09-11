@@ -15,6 +15,7 @@
 
 import { forbidden } from "next/navigation";
 import type { Session } from "next-auth";
+import { denialMessage } from "./access";
 import { AppError } from "./errors";
 import { hasPermission } from "./repo";
 import { requireSession } from "./session";
@@ -34,11 +35,31 @@ export async function requireVerificationsWrite(): Promise<Session> {
   return session;
 }
 
+/**
+ * The general server-action/route-handler grant guard: EBOARD/ADMIN always,
+ * or a GENERAL member holding `permission`. Throws an AppError carrying the
+ * denial, so the caller can report WHICH grant was missing ("requires the
+ * Membership audit permission") instead of a generic refusal — see
+ * lib/access.ts denialCopy, which produces the same sentence the
+ * access-denied page shows.
+ */
+export async function requirePermission(permission: PermissionName): Promise<Session> {
+  const session = await requireSession();
+  if (!(await isAllowed(session, permission))) {
+    throw new AppError("FORBIDDEN", denialMessage({ kind: "permission", permission }), {
+      denial: { kind: "permission", permission },
+    });
+  }
+  return session;
+}
+
 /** Server-action counterpart to requireVerificationsWrite — throws AppError (caught by the action's own try/catch) instead of calling next/navigation's forbidden(), which only works from a Server Component render. */
 export async function requireVerificationsWriteAction(): Promise<Session> {
   const session = await requireSession();
   if (!(await isAllowed(session, "verifications_write"))) {
-    throw new AppError("FORBIDDEN", "You don't have access to verifications");
+    throw new AppError("FORBIDDEN", denialMessage({ kind: "permission", permission: "verifications_write" }), {
+      denial: { kind: "permission", permission: "verifications_write" },
+    });
   }
   return session;
 }

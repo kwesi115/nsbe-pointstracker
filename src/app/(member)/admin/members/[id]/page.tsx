@@ -1,3 +1,5 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../../_components/AccessDenied";
 import { notFound } from "next/navigation";
 import AdminHousePanel from "@/components/admin/AdminHousePanel";
 import AdminMembershipPanel from "@/components/admin/AdminMembershipPanel";
@@ -12,12 +14,13 @@ import { normalizeEmail } from "@/lib/email";
 import { formatDate, formatDateTime, memberDisplayName } from "@/lib/format";
 import { attendanceRate, isEligible, longestAttendanceStreak } from "@/lib/points";
 import { getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory, resolveVerifierNames } from "@/lib/repo";
-import { requireAdminForbidden } from "@/lib/session";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default async function AdminMemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requireAdminForbidden();
+  const guard = await guardAdminPage({ level: "admin" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const orgId = session.user.orgId;
   const { id } = await params;
 
@@ -81,7 +84,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
           {member.email} · {season || "no season set"}
         </p>
       </div>
-      <AdminNav active="/admin/members" />
+      <AdminNav active="/admin/members" access={guard.access} />
 
       <section className="flex flex-wrap items-center gap-3">
         <RoleSelect email={member.email} role={member.role} />

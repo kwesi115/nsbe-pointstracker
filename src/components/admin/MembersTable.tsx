@@ -80,7 +80,16 @@ function StatusLegend() {
   );
 }
 
-export default function MembersTable({ members, houses }: { members: MemberWithStats[]; houses: House[] }) {
+export default function MembersTable({
+  members,
+  houses,
+  exportsEnabled,
+}: {
+  members: MemberWithStats[];
+  houses: House[];
+  /** Config.EXPORTS_ENABLED — hides "Export selected", whose endpoint is gated by the same flag. See lib/features.ts. */
+  exportsEnabled: boolean;
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const { show } = useToast();
@@ -118,7 +127,11 @@ export default function MembersTable({ members, houses }: { members: MemberWithS
       body: JSON.stringify({ emails }),
     });
     if (!res.ok) {
-      show("Export failed", "error");
+      // The endpoint answers with JSON { code, message } on a 403 — surface the
+      // server's own reason (see lib/api.ts withApiErrors) rather than a
+      // generic failure that hides "exports are turned off right now".
+      const body = await res.json().catch(() => null);
+      show(typeof body?.message === "string" ? body.message : "Export failed", "error");
       return;
     }
     const blob = await res.blob();
@@ -164,9 +177,11 @@ export default function MembersTable({ members, houses }: { members: MemberWithS
             >
               Demote to General
             </Button>
-            <Button type="button" onClick={exportSelected} disabled={isPending}>
-              Export selected
-            </Button>
+            {exportsEnabled ? (
+              <Button type="button" onClick={exportSelected} disabled={isPending}>
+                Export selected
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}

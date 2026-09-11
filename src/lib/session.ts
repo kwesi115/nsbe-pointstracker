@@ -12,6 +12,14 @@ import { getRole } from "./repo";
 
 export { isEboardOrAdmin };
 
+/**
+ * The copy a denied Server Action or Route Handler reports. Kept in step with
+ * lib/access.ts denialCopy() by access.test.ts — an action and the page it
+ * lives on should not describe the same refusal two different ways.
+ */
+const ADMIN_DENIAL_MESSAGE = "This page is admin-only. If you need access, ask a current admin to grant it.";
+const EBOARD_DENIAL_MESSAGE = "This page is E-Board only. If you need access, ask a current admin to grant it.";
+
 export async function requireSession(): Promise<Session> {
   const session = await auth();
   if (!session?.user?.email) {
@@ -45,7 +53,7 @@ export async function requireAdmin(): Promise<Session> {
   const session = await requireSession();
   const role = await getRole(session.user.orgId, session.user.email);
   if (role !== "admin") {
-    throw new AppError("FORBIDDEN", "Admin access required");
+    throw new AppError("FORBIDDEN", ADMIN_DENIAL_MESSAGE, { denial: { kind: "admin" } });
   }
   return session;
 }
@@ -60,7 +68,7 @@ export async function requireEboard(): Promise<Session> {
   const session = await requireSession();
   const role = await getRole(session.user.orgId, session.user.email);
   if (role !== "admin" && role !== "eboard") {
-    throw new AppError("FORBIDDEN", "E-Board access required");
+    throw new AppError("FORBIDDEN", EBOARD_DENIAL_MESSAGE, { denial: { kind: "eboard" } });
   }
   return session;
 }

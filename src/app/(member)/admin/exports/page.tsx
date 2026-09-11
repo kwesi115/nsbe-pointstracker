@@ -1,10 +1,11 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import { Download } from "lucide-react";
 import AdminNav from "@/components/admin/AdminNav";
 import CreateSnapshotButton from "@/components/admin/CreateSnapshotButton";
 import Card from "@/components/ui/Card";
 import { formatDateTime } from "@/lib/format";
 import { listSeasonSnapshots } from "@/lib/export/snapshot";
-import { requireEboard } from "@/lib/session";
 
 const EXPORTS = [
   {
@@ -21,7 +22,9 @@ const EXPORTS = [
 ];
 
 export default async function AdminExportsPage() {
-  const session = await requireEboard();
+  const guard = await guardAdminPage({ level: "eboard", feature: "exports" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const snapshots = await listSeasonSnapshots(session.user.orgId);
 
   return (
@@ -32,7 +35,7 @@ export default async function AdminExportsPage() {
           Postgres is the source of truth — everything here is generated on demand, not a file anyone edits.
         </p>
       </div>
-      <AdminNav active="/admin/exports" />
+      <AdminNav active="/admin/exports" access={guard.access} />
 
       <div className="flex flex-col gap-4">
         {EXPORTS.map((item) => (

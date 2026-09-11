@@ -14,7 +14,7 @@ import type { Audience, EventCategory } from "@/lib/types";
 
 const INITIAL_STATE: CategoryActionState = { error: null };
 
-function CategoryFields({ category }: { category?: EventCategory }) {
+function CategoryFields({ category, exportsEnabled }: { category?: EventCategory; exportsEnabled: boolean }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-4">
@@ -39,16 +39,21 @@ function CategoryFields({ category }: { category?: EventCategory }) {
       {category ? (
         <p className="rounded-lg bg-amber/10 px-3 py-2 text-xs text-ink">
           Points are derived, not stored — changing "Member points" here changes every past registration in this
-          category&apos;s contribution to the leaderboard immediately, with no backfill.{" "}
-          <a
-            href="/api/admin/export/leaderboard/csv"
-            className="font-semibold text-signal underline underline-offset-2"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Export current standings to CSV
-          </a>{" "}
-          first if you want a record of today&apos;s totals.
+          category&apos;s contribution to the leaderboard immediately, with no backfill.
+          {exportsEnabled ? (
+            <>
+              {" "}
+              <a
+                href="/api/admin/export/leaderboard/csv"
+                className="font-semibold text-signal underline underline-offset-2"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Export current standings to CSV
+              </a>{" "}
+              first if you want a record of today&apos;s totals.
+            </>
+          ) : null}
         </p>
       ) : null}
       <Field label="Examples" help="Shown to admins building events — not visible to members.">
@@ -85,13 +90,21 @@ function CategoryFields({ category }: { category?: EventCategory }) {
   );
 }
 
-function EditCategoryForm({ category, onDone }: { category: EventCategory; onDone: () => void }) {
+function EditCategoryForm({
+  category,
+  onDone,
+  exportsEnabled,
+}: {
+  category: EventCategory;
+  onDone: () => void;
+  exportsEnabled: boolean;
+}) {
   const boundAction = updateCategoryAction.bind(null, category.id);
   const [state, formAction, pending] = useActionState(boundAction, INITIAL_STATE);
 
   return (
     <form action={formAction} className="flex flex-col gap-4 border-t border-line pt-4">
-      <CategoryFields category={category} />
+      <CategoryFields category={category} exportsEnabled={exportsEnabled} />
       {state.error ? <p className="text-sm font-medium text-alert">{state.error}</p> : null}
       <div className="flex gap-2">
         <Button type="submit" disabled={pending}>
@@ -109,7 +122,7 @@ function NewCategoryForm({ onDone }: { onDone: () => void }) {
   const [state, formAction, pending] = useActionState(createCategoryAction, INITIAL_STATE);
   return (
     <form action={formAction} className="flex flex-col gap-4">
-      <CategoryFields />
+      <CategoryFields exportsEnabled={false} />
       {state.error ? <p className="text-sm font-medium text-alert">{state.error}</p> : null}
       <div className="flex gap-2">
         <Button type="submit" disabled={pending}>
@@ -123,7 +136,14 @@ function NewCategoryForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-export default function CategoriesManager({ categories }: { categories: EventCategory[] }) {
+export default function CategoriesManager({
+  categories,
+  exportsEnabled,
+}: {
+  categories: EventCategory[];
+  /** Config.EXPORTS_ENABLED — when off, the "export current standings first" nudge is dropped rather than linking at an endpoint that would 403. */
+  exportsEnabled: boolean;
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -168,7 +188,7 @@ export default function CategoriesManager({ categories }: { categories: EventCat
                 {editingId === c.id ? (
                   <tr>
                     <td colSpan={8} className="bg-surface-sunken px-4 py-4">
-                      <EditCategoryForm category={c} onDone={() => setEditingId(null)} />
+                      <EditCategoryForm category={c} onDone={() => setEditingId(null)} exportsEnabled={exportsEnabled} />
                     </td>
                   </tr>
                 ) : null}

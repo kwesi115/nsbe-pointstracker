@@ -1,10 +1,13 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../../_components/AccessDenied";
 import Link from "next/link";
 import CategoriesManager from "@/components/admin/CategoriesManager";
 import { getEventCategories } from "@/lib/repo";
-import { requireAdmin } from "@/lib/session";
 
 export default async function CategoriesSettingsPage() {
-  const session = await requireAdmin();
+  const guard = await guardAdminPage({ level: "admin" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const categories = await getEventCategories(session.user.orgId);
 
   return (
@@ -19,7 +22,7 @@ export default async function CategoriesSettingsPage() {
           with no deploy.
         </p>
       </div>
-      <CategoriesManager categories={categories} />
+      <CategoriesManager categories={categories} exportsEnabled={guard.access.features.exports} />
     </main>
   );
 }

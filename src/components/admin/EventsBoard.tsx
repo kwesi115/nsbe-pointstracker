@@ -28,7 +28,14 @@ const DURATIONS = [15, 20, 30, 45, 60];
 
 type EventWithAlert = EventWithStats & { codeAlert: EventCodeAlertState };
 
-export default function EventsBoard({ initialEvents }: { initialEvents: EventWithAlert[] }) {
+export default function EventsBoard({
+  initialEvents,
+  exportsEnabled,
+}: {
+  initialEvents: EventWithAlert[];
+  /** Config.EXPORTS_ENABLED for this org — see lib/features.ts. Hides the per-event "Export CSV" affordance, whose endpoint is gated by the same flag and would only 403. */
+  exportsEnabled: boolean;
+}) {
   const [allEvents, setEvents] = useState(initialEvents);
   const [now, setNow] = useState(() => new Date());
   // EBOARD_ONLY events shouldn't clutter the general list by default (Part 4).
@@ -105,7 +112,7 @@ export default function EventsBoard({ initialEvents }: { initialEvents: EventWit
       </Group>
       <Group title="Past" empty="No past events yet.">
         {past.map((e) => (
-          <PastRow key={e.eventId} event={e} onChanged={refresh} />
+          <PastRow key={e.eventId} event={e} onChanged={refresh} exportsEnabled={exportsEnabled} />
         ))}
       </Group>
     </div>
@@ -334,7 +341,15 @@ function ScheduledRow({ event, onChanged }: { event: EventWithStats; onChanged: 
   );
 }
 
-function PastRow({ event, onChanged }: { event: EventWithStats; onChanged: () => void }) {
+function PastRow({
+  event,
+  onChanged,
+  exportsEnabled,
+}: {
+  event: EventWithStats;
+  onChanged: () => void;
+  exportsEnabled: boolean;
+}) {
   const { show } = useToast();
   const [isPending, startTransition] = useTransition();
   const [duration, setDuration] = useState(30);
@@ -359,12 +374,14 @@ function PastRow({ event, onChanged }: { event: EventWithStats; onChanged: () =>
           <Button href={`/admin/events/${event.eventId}/responses`} variant="secondary">
             Responses
           </Button>
-          <a
-            href={`/api/admin/export/event/${event.eventId}/csv`}
-            className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
-          >
-            Export CSV
-          </a>
+          {exportsEnabled ? (
+            <a
+              href={`/api/admin/export/event/${event.eventId}/csv`}
+              className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            >
+              Export CSV
+            </a>
+          ) : null}
           {event.status !== "canceled" ? (
             <>
               <select

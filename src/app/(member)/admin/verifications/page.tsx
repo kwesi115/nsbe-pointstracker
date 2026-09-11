@@ -1,3 +1,5 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import Link from "next/link";
 import AdminNav from "@/components/admin/AdminNav";
 import VerificationQueue from "@/components/admin/VerificationQueue";
@@ -8,10 +10,11 @@ import {
   getNationalPendingMembers,
 } from "@/lib/repo";
 import { isEboardOrAdmin } from "@/lib/session";
-import { requireVerificationsWrite } from "@/lib/permissions";
 
 export default async function AdminVerificationsPage() {
-  const session = await requireVerificationsWrite();
+  const guard = await guardAdminPage({ level: "permission", permission: "verifications_write" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const orgId = session.user.orgId;
   const [dues, national, house, houseMissing] = await Promise.all([
     getDuesPendingMembers(orgId),
@@ -30,7 +33,7 @@ export default async function AdminVerificationsPage() {
         </p>
       </div>
       {isEboardOrAdmin(session.user.role) ? (
-        <AdminNav active="/admin/verifications" />
+        <AdminNav active="/admin/verifications" access={guard.access} />
       ) : (
         <p className="text-xs text-muted">
           You have access to this page only — granted by an Admin. <a href="/dashboard" className="underline underline-offset-2">Back to dashboard</a>

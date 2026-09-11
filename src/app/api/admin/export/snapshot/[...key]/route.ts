@@ -3,11 +3,14 @@ import { withApiErrors } from "@/lib/api";
 import { AppError } from "@/lib/errors";
 import { SNAPSHOT_PREFIX_FOR } from "@/lib/export/snapshot";
 import { backupStorage } from "@/lib/storage";
-import { requireEboard } from "@/lib/session";
+import { requireAccess } from "@/lib/access-guards";
+
+/** E-Board or above AND the org's exports switch on — see lib/features.ts. A 403 from here is JSON ({ code, message }), never HTML: this is an API route. */
+const EXPORT_ACCESS = { level: "eboard", feature: "exports" } as const;
 
 /** Downloads one prior season snapshot — see /admin/exports. The key's org prefix is checked against the caller's own orgId so an E-Board member can never guess another org's snapshot key. */
 export const GET = withApiErrors(async (_request: Request, ctx: { params: Promise<{ key: string[] }> }) => {
-  const session = await requireEboard();
+  const session = await requireAccess(EXPORT_ACCESS);
   const { key: segments } = await ctx.params;
   const key = segments.join("/");
 

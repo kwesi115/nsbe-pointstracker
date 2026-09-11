@@ -1,10 +1,13 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import AdminNav from "@/components/admin/AdminNav";
 import JoinCodesManager from "@/components/admin/JoinCodesManager";
 import { listJoinCodes } from "@/lib/repo";
-import { requireAdminForbidden } from "@/lib/session";
 
 export default async function AdminJoinCodesPage() {
-  const session = await requireAdminForbidden();
+  const guard = await guardAdminPage({ level: "admin" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const codes = await listJoinCodes(session.user.orgId);
 
   return (
@@ -17,7 +20,7 @@ export default async function AdminJoinCodesPage() {
           E-Board/Admin codes on handoff.
         </p>
       </div>
-      <AdminNav active="/admin/join-codes" />
+      <AdminNav active="/admin/join-codes" access={guard.access} />
       <JoinCodesManager codes={codes} />
     </main>
   );

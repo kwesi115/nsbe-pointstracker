@@ -1,16 +1,20 @@
+import { guardAdminPage } from "@/lib/access-guards";
+import AccessDenied from "../_components/AccessDenied";
 import { KeyRound, Layers } from "lucide-react";
 import Link from "next/link";
 import AdminNav from "@/components/admin/AdminNav";
 import CoreFormSettingsForm from "@/components/admin/CoreFormSettingsForm";
 import EboardSettingsForm from "@/components/admin/EboardSettingsForm";
+import ExportsSettingsForm from "@/components/admin/ExportsSettingsForm";
 import ExternalLinksForm from "@/components/admin/ExternalLinksForm";
 import SettingsForm from "@/components/admin/SettingsForm";
 import Card from "@/components/ui/Card";
 import { DEFAULT_LEADERBOARD_DISCLAIMER, DEFAULT_NATIONAL_MEMBERSHIP_URL, getConfigValue, getCoreFormConfig } from "@/lib/repo";
-import { requireAdmin } from "@/lib/session";
 
 export default async function AdminSettingsPage() {
-  const session = await requireAdmin();
+  const guard = await guardAdminPage({ level: "admin" });
+  if (!guard.ok) return <AccessDenied denied={guard} />;
+  const session = guard.session;
   const orgId = session.user.orgId;
 
   const [
@@ -50,7 +54,7 @@ export default async function AdminSettingsPage() {
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-8 px-6 py-10">
       <h1 className="font-display text-2xl font-bold text-ink">Settings</h1>
-      <AdminNav active="/admin/settings" />
+      <AdminNav active="/admin/settings" access={guard.access} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Join codes</h2>
@@ -126,6 +130,13 @@ export default async function AdminSettingsPage() {
             membershipSiteUrl={membershipSiteUrl}
             nationalMembershipUrl={nationalMembershipUrl}
           />
+        </Card>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Exports</h2>
+        <Card>
+          <ExportsSettingsForm exportsEnabled={guard.access.features.exports} />
         </Card>
       </section>
 
