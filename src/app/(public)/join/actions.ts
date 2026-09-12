@@ -14,8 +14,10 @@ import {
   recordSignupAttempt,
 } from "@/lib/rate-limit";
 import {
+  completeSignup,
   getConfigValue,
   getCoreFormConfig,
+  getSignupUser,
   matchJoinCode,
   redeemJoinCodeForSignup,
   setDuesReported,
@@ -26,6 +28,8 @@ import {
 } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
 import { clientIpFromHeaders } from "@/lib/request";
+import { missingSignupSteps } from "@/lib/signup";
+import { postSignupDestination } from "@/lib/signup-routes";
 import type { Classification, Role, ShirtSize } from "@/lib/types";
 
 const GENERIC_CODE_ERROR = "That join code doesn't work. Check it and try again.";
@@ -360,6 +364,100 @@ export async function setResumeAction(resumeFileId: string): Promise<JoinStepSta
     return { error: null };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+}
+
+/**
+ * "About you" as a write, for the resume flow — name, student ID,
+ * classification and major on an account that already exists.
+ *
+ * The wizard never needs this: AccountStep collects these fields in the same
+ * submission that creates the row, and its About step is only a review screen.
+ * An account provisioned by an admin or by bulk import (see lib/repo.ts
+ * createMemberAccount / commitBulkImport) has none of them, which is exactly
+ * why they can be a resume point.
+ */
+export async function updateAboutAction(input: {
+  firstName: string;
+  lastName: string;
+  studentId: string;
+  classification?: Classification;
+  major?: string;
+  majorOther?: string;
+}): Promise<JoinStepState> {
+  const session = await requireWizardSession();
+  if (!session) return SESSION_EXPIRED_STATE;
+
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName.trim();
+  const studentId = input.studentId.trim();
+  const major = input.major?.trim() ?? "";
+  const majorOther = input.majorOther?.trim() ?? "";
+
+  // The same floor the wizard's own AccountStep enforces, re-checked here
+  // rather than trusted: this action is reachable directly.
+  if (!firstName || !lastName) return { error: "First and last name are required." };
+  if (!studentId) return { error: "Student ID is required." };
+  if (!input.classification) return { error: "Select your classification." };
+  if (!major) return { error: "Select your major." };
+  if (major === OTHER_MAJOR && !majorOther) return { error: "Tell us your major." };
+
+  try {
+    await updateProfileFields(
+      session.user.orgId,
+      session.user.email,
+      {
+        firstName,
+        lastName,
+        studentId,
+        classification: input.classification,
+        major,
+        majorOther: major === OTHER_MAJOR ? majorOther : "",
+      },
+      session.user.email,
+    );
+    return { error: null };
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+}
+
+export interface CompleteSignupState extends JoinStepState {
+  /** Where the caller should send the member now that signup is finished. */
+  destination: string | null;
+  /** Steps still outstanding when the latch was refused — the flow re-renders at the first of them. */
+  missingSteps: string[];
+}
+
+/**
+ * Latches the signup as finished and says where to go.
+ *
+ * The server re-derives "is it actually finished" from the row inside
+ * lib/repo.ts completeSignup rather than believing the client — the whole point
+ * of the gate is that an unfinished profile cannot get into the app, so the
+ * claim that it is finished is exactly the claim that must not be taken on
+ * trust. `houseSkipped` is the documented exception (see completeSignup).
+ */
+export async function completeSignupAction(input: {
+  houseSkipped?: boolean;
+  callbackUrl?: string | null;
+} = {}): Promise<CompleteSignupState> {
+  const session = await requireWizardSession();
+  if (!session) return { ...SESSION_EXPIRED_STATE, destination: null, missingSteps: [] };
+
+  try {
+    await completeSignup(session.user.orgId, session.user.email, { houseSkipped: input.houseSkipped });
+    return { error: null, destination: postSignupDestination(input.callbackUrl), missingSteps: [] };
+  } catch (err) {
+    if (err instanceof AppError) {
+      // Tell the flow WHICH steps are outstanding, so a refusal re-renders at
+      // the right place instead of just showing a dead end.
+      const user = await getSignupUser(session.user.orgId, session.user.email);
+      const missingSteps = user ? missingSignupSteps(user, { houseSkipped: input.houseSkipped }) : [];
+      return { error: err.message, destination: null, missingSteps };
+    }
     throw err;
   }
 }

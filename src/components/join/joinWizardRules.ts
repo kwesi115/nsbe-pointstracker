@@ -8,38 +8,13 @@
 import { houseSelfVerifies } from "@/lib/core-form";
 import type { Role } from "@/lib/types";
 
-export type StepKey = "type" | "code" | "account" | "about" | "contact" | "membership" | "house" | "resume";
-
-export type AccountType = "general" | "eboard" | "admin" | null;
-
 /**
- * `accountType` is the step-1 picker's client-side hint — it only decides
- * whether the "code" step is shown at all (a General signup needs no code,
- * so it goes straight from the picker to the account step). `resolvedRole`
- * is the server-confirmed role from the redeemed code (or "general" itself,
- * for a codeless signup) — it's what decides whether the profile steps are
- * skipped. The two are deliberately separate: the picker is never
- * authorization, only UI routing (see JoinWizard.tsx's JoinCodeStep copy).
- *
- * ADMIN is the ONLY role that skips anything. An E-Board member is a student
- * with a House, a shirt size, dues and a national membership just like every
- * other member, so an EBOARD signup is identical to a GENERAL one apart from
- * the join code step that resolved the role in the first place. An ADMIN
- * account is a staff login, not a member profile: it stops after the account
- * step (email/password plus name, student ID, classification and major),
- * skipping About you, Contact, Membership, House and Resume.
- *
- * Note this is about WHO IS SIGNING UP. The reduced core form on EBOARD_ONLY
- * events is a separate rule about WHAT EVENT you're at — see
- * lib/core-form.ts getMissingFields. The two must never be collapsed.
+ * The step list moved to lib/signup.ts, because the resume flow's server-side
+ * guards need it too and `lib` must not import from `components`. Re-exported
+ * here so the wizard's own imports keep reading naturally — there is still
+ * exactly one implementation.
  */
-export function stepsFor(accountType: AccountType, resolvedRole: Role | null): StepKey[] {
-  const base: StepKey[] = ["type"];
-  if (accountType !== "general") base.push("code");
-  base.push("account");
-  if (resolvedRole === "admin") return base;
-  return [...base, "about", "contact", "membership", "house", "resume"];
-}
+export { stepsFor, type AccountType, type StepKey } from "@/lib/signup";
 
 const SELECT_OR_SKIP = `Select your House, or choose "I haven't taken the test yet."`;
 

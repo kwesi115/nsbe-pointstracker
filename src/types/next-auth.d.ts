@@ -15,6 +15,13 @@ declare module "next-auth" {
       mustChangePassword: boolean;
       /** Re-read on every session check. PENDING/SUSPENDED can sign in but not register — see /pending. */
       status: UserStatus;
+      /**
+       * False while the account is still mid-signup (see lib/signup.ts). Re-read
+       * live on every session check, NOT carried in the JWT: a stale "false" in
+       * a token would outlive the moment signup finished and pin the member in
+       * the resume flow. (member)/layout.tsx is the gate that reads it.
+       */
+      signupComplete: boolean;
     } & DefaultSession["user"];
   }
 

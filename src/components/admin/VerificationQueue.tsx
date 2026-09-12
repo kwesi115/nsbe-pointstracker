@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import {
   approveAction,
   bulkApproveAction,
@@ -11,6 +11,7 @@ import {
 } from "@/app/(member)/admin/verifications/actions";
 import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
+import { HouseProofLightbox, HouseProofThumbnail, type HouseProofSubject } from "@/components/admin/HouseProofViewer";
 import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
@@ -24,6 +25,16 @@ interface Tab {
 }
 
 const INITIAL_STATE: VerificationActionState = { error: null };
+
+/** Member row -> what the proof viewer needs. One mapping, used by the cell and the queue alike. */
+function subjectFor(m: Member): HouseProofSubject {
+  return {
+    email: m.email,
+    name: `${m.firstName} ${m.lastName}`.trim() || m.email,
+    house: m.house,
+    houseProofFileId: m.houseProofFileId,
+  };
+}
 
 const ROLE_LABEL: Record<Role, string> = {
   general: "General",
@@ -53,7 +64,48 @@ export default function VerificationQueue({
   const [isPending, startTransition] = useTransition();
   const { show } = useToast();
 
+  /**
+   * The House screenshot currently open full size, as an index into the House
+   * queue — an index rather than an email so next/previous is just ±1, and the
+   * position readout ("3 of 12") is the same number.
+   *
+   * ONE lightbox for the whole tab, not one per row: paging through the pile is
+   * the point, and that is only possible if the viewer outlives any single row.
+   */
+  const [openProofIndex, setOpenProofIndex] = useState<number | null>(null);
+  /**
+   * A House claim being rejected with no screenshot to look at. Rare — the wizard
+   * requires the two together — but reachable for older rows, and such a claim
+   * still has to be rejectable. The lightbox owns this for every claim that DOES
+   * have an image; this covers the ones that don't.
+   */
+  const [houseRejectTarget, setHouseRejectTarget] = useState<string | null>(null);
+  // The thumbnail that opened it, so focus goes back there on close.
+  const proofTriggerRef = useRef<HTMLElement | null>(null);
+  // Claims decided in this session. The server has already dropped them from the
+  // queue, but this page's props are from the render that fetched it — hiding
+  // them keeps the pile honest while an admin works down it.
+  const [decided, setDecided] = useState<Set<string>>(new Set());
+
   const active = tabs.find((t) => t.id === activeTab)!;
+
+  /**
+   * The House pile the lightbox pages through: every pending claim that still
+   * HAS a screenshot, minus the ones decided a moment ago. Claims with no upload
+   * are left out — there is nothing to page to, and the thumbnail says so where
+   * it sits.
+   */
+  const houseQueue: HouseProofSubject[] = house
+    .filter((m) => m.houseProofFileId && !decided.has(m.email))
+    .map(subjectFor);
+  const openProof = openProofIndex === null ? null : (houseQueue[openProofIndex] ?? null);
+  /** The rows actually on screen — the active tab minus anything decided a moment ago. */
+  const rows = visible(active.members);
+
+  /** Rows still worth showing — see `decided`. */
+  function visible(members: Member[]): Member[] {
+    return members.filter((m) => !decided.has(m.email));
+  }
 
   function switchTab(id: VerificationQueueTab) {
     setActiveTab(id);
@@ -70,7 +122,7 @@ export default function VerificationQueue({
   }
 
   function toggleAll() {
-    setSelected((prev) => (prev.size === active.members.length ? new Set() : new Set(active.members.map((m) => m.email))));
+    setSelected((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((m) => m.email))));
   }
 
   // Bulk approve is the one action here still dispatched from a click: it has
@@ -127,7 +179,7 @@ export default function VerificationQueue({
         </div>
       ) : null}
 
-      {active.members.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-muted">
           Nothing pending here.
         </p>
@@ -137,7 +189,7 @@ export default function VerificationQueue({
             <th className={thClass}>
               <input
                 type="checkbox"
-                checked={selected.size === active.members.length}
+                checked={rows.length > 0 && selected.size === rows.length}
                 onChange={toggleAll}
                 aria-label="Select all"
                 className="h-4 w-4"
@@ -155,7 +207,7 @@ export default function VerificationQueue({
             <th className={thClass}></th>
           </Thead>
           <tbody>
-            {active.members.map((m) => (
+            {rows.map((m) => (
               <tr key={m.email} className="border-b border-line last:border-0">
                 <td className={tdClass}>
                   <input
@@ -177,31 +229,39 @@ export default function VerificationQueue({
                 {activeTab === "house" ? <td className={tdClass}>{m.house || "—"}</td> : null}
                 {activeTab === "house" ? (
                   <td className={tdClass}>
-                    {m.houseProofFileId ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- authenticated endpoint, not a static asset
-                      <img
-                        src={`/api/files/${m.houseProofFileId}`}
-                        alt={`${m.firstName} ${m.lastName}'s House test result`}
-                        className="h-16 w-16 rounded-lg border border-line object-cover"
-                      />
-                    ) : (
-                      "—"
-                    )}
+                    {/* Clicking opens the shared lightbox at this row. */}
+                    <HouseProofThumbnail
+                      subject={subjectFor(m)}
+                      onOpen={(trigger) => {
+                        proofTriggerRef.current = trigger;
+                        setOpenProofIndex(houseQueue.findIndex((q) => q.email === m.email));
+                      }}
+                    />
                   </td>
                 ) : null}
                 <td className={tdClass}>
                   <div className="flex justify-end gap-2">
                     {activeTab === "house" ? (
-                      <ActionButton<VerificationActionState>
-                        action={rejectAction}
-                        initialState={INITIAL_STATE}
-                        payload={{ email: m.email }}
-                        label="Reject"
+                      // Rejecting a House claim requires a note (see
+                      // verifications/actions.ts rejectAction), and the place to
+                      // type one is beside the screenshot being judged — so the
+                      // row opens the proof rather than rejecting blind. With no
+                      // screenshot there is nothing to review, so it goes straight
+                      // to the note.
+                      <Button
+                        type="button"
                         variant="secondary"
                         disabled={isPending}
-                        onSuccess={() => show("Rejected")}
-                        onError={(message) => show(message, "error")}
-                      />
+                        onClick={() => {
+                          if (m.houseProofFileId) {
+                            setOpenProofIndex(houseQueue.findIndex((q) => q.email === m.email));
+                          } else {
+                            setHouseRejectTarget(m.email);
+                          }
+                        }}
+                      >
+                        {m.houseProofFileId ? "Review" : "Reject"}
+                      </Button>
                     ) : (
                       <Button type="button" variant="secondary" onClick={() => setRevokeTarget(m.email)} disabled={isPending}>
                         Revoke
@@ -223,6 +283,50 @@ export default function VerificationQueue({
           </tbody>
         </Table>
       )}
+
+      {/* One viewer for the whole House tab. Next/previous walk the pending pile
+          without closing and reopening; a decision advances to the next claim,
+          or closes when that was the last one. */}
+      <HouseProofLightbox
+        subject={openProof}
+        paging={
+          openProofIndex === null
+            ? undefined
+            : {
+                position: openProofIndex + 1,
+                total: houseQueue.length,
+                onPrevious: openProofIndex > 0 ? () => setOpenProofIndex(openProofIndex - 1) : undefined,
+                onNext: openProofIndex < houseQueue.length - 1 ? () => setOpenProofIndex(openProofIndex + 1) : undefined,
+              }
+        }
+        returnFocusTo={proofTriggerRef}
+        onClose={() => setOpenProofIndex(null)}
+        onDecided={(email) => setDecided((prev) => new Set(prev).add(email))}
+      />
+
+      {/* Rejecting a House claim that has no screenshot attached. Same action and
+          same required note as the lightbox's Reject — only the image is absent. */}
+      <ConfirmDialog<VerificationActionState>
+        open={houseRejectTarget !== null}
+        title="Reject this House claim?"
+        description="There's no screenshot on this claim to check it against. Rejecting clears it and re-asks at their next check-in."
+        confirmLabel="Reject House"
+        tone="danger"
+        action={rejectAction}
+        initialState={INITIAL_STATE}
+        payload={{ email: houseRejectTarget }}
+        reason={{
+          label: "Why",
+          placeholder: "e.g. No proof submitted",
+          help: "Recorded in the admin log against your account.",
+        }}
+        onCancel={() => setHouseRejectTarget(null)}
+        onSuccess={() => {
+          show("House rejected");
+          if (houseRejectTarget) setDecided((prev) => new Set(prev).add(houseRejectTarget));
+          setHouseRejectTarget(null);
+        }}
+      />
 
       {/* The shared dialog with its required-note field, in place of the
           hand-rolled RevokeDialog this used to carry. */}

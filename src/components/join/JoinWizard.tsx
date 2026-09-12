@@ -4,24 +4,27 @@ import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   checkJoinCodeAction,
+  completeSignupAction,
   createAccountAction,
-  setHouseAction,
-  setResumeAction,
-  updateContactAction,
-  updateMembershipAction,
   type CheckJoinCodeState,
   type CreateAccountState,
 } from "@/app/(public)/join/actions";
-import Description from "@/components/forms/Description";
-import FileDropField from "@/components/forms/FileDropField";
-import HouseBlock from "@/components/forms/HouseBlock";
-import YesNo from "@/components/forms/YesNo";
 import Button from "@/components/ui/Button";
 import Field, { inputClass, selectClass } from "@/components/ui/Field";
-import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, SHIRT_SIZE_OPTIONS, coreField } from "@/lib/core-form";
+import { CLASSIFICATION_OPTIONS, OTHER_MAJOR } from "@/lib/core-form";
 import type { House } from "@/lib/houses";
-import type { Classification, Role, ShirtSize } from "@/lib/types";
-import { stepsFor, validateHouseStep, type StepKey } from "./joinWizardRules";
+import type { Classification, Role } from "@/lib/types";
+import { stepsFor } from "./joinWizardRules";
+import {
+  ContactStep,
+  HouseStep,
+  MembershipStep,
+  ProgressIndicator,
+  ResumeStep,
+  StepCard,
+  StepError,
+  type ProfileDraft,
+} from "./steps";
 
 const ACCOUNT_TYPES: Array<{ value: "general" | "eboard" | "admin"; label: string; description: string }> = [
   { value: "general", label: "General member", description: "The account most members create — announced at GBMs." },
@@ -44,41 +47,17 @@ const ACCOUNT_TYPE_LABEL: Record<Role, string> = {
   guest: "General member",
 };
 
-const STEP_LABEL: Record<StepKey, string> = {
-  type: "Account type",
-  code: "Join code",
-  account: "Account",
-  about: "About you",
-  contact: "Contact",
-  membership: "Membership",
-  house: "NSBE House",
-  resume: "Resume",
-};
 
-interface Draft {
+/**
+ * The shared profile fields (see steps.tsx ProfileDraft) plus the state that
+ * only exists before an account does: the picker's choice, the join code, the
+ * role that code resolved to, and whether the account has been created yet.
+ */
+interface Draft extends ProfileDraft {
   accountType: "general" | "eboard" | "admin" | null;
   code: string;
   resolvedRole: Role | null;
   email: string;
-  firstName: string;
-  lastName: string;
-  studentId: string;
-  classification: Classification | "";
-  major: string;
-  majorOther: string;
-  phone: string;
-  personalEmail: string;
-  tshirtSize: ShirtSize | "";
-  duesPaid: boolean | undefined;
-  nationalMember: boolean | undefined;
-  nsbeMembershipId: string;
-  houseSkipped: boolean;
-  house: string;
-  houseProofFileId: string | undefined;
-  houseFilename: string | undefined;
-  resumeFileId: string | undefined;
-  resumeFilename: string | undefined;
-  resumeSkipped: boolean;
   accountCreated: boolean;
 }
 
@@ -124,6 +103,7 @@ export default function JoinWizard({ config }: { config: JoinWizardConfig }) {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [stepIndex, setStepIndex] = useState(0);
   const [hydrated, setHydrated] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
 
   // Persist non-secret wizard state so a validation failure deep in the
   // wizard (Part 4: "a validation failure on step 8 doesn't lose steps 4–6")
@@ -165,13 +145,33 @@ export default function JoinWizard({ config }: { config: JoinWizardConfig }) {
     setStepIndex((i) => Math.max(i - 1, 0));
   }
 
-  function finish() {
+  /**
+   * Latch the signup as finished, then leave.
+   *
+   * Until completeSignupAction succeeds this account is mid-signup, and every
+   * protected route sends it to /join/resume (see lib/signup.ts) — so this call
+   * is what actually releases the member into the app, not the router.push.
+   *
+   * If it is refused, the wizard does NOT pretend to be done: it says so and
+   * stays put. The likely cause is a step whose save failed earlier, and
+   * /join/resume would re-derive the same outstanding step anyway.
+   *
+   * houseSkipped is forwarded because "I haven't taken the test yet" writes
+   * nothing by design, so the server cannot read that answer back.
+   */
+  async function finish() {
+    setFinishError(null);
+    const result = await completeSignupAction({ houseSkipped: draft.houseSkipped });
+    if (result.error || !result.destination) {
+      setFinishError(result.error ?? "Something is still missing. Check the steps above.");
+      return;
+    }
     try {
       sessionStorage.removeItem(STORAGE_KEY);
     } catch {
       // Ignore.
     }
-    router.push("/events");
+    router.push(result.destination);
   }
 
   return (
@@ -252,51 +252,22 @@ export default function JoinWizard({ config }: { config: JoinWizardConfig }) {
       )}
 
       {step === "house" && (
-        <HouseStep draft={draft} houses={config.houses} houseTestUrl={config.houseTestUrl} onPatch={patch} onBack={goBack} onNext={goNext} />
+        <HouseStep
+          draft={draft}
+          houses={config.houses}
+          houseTestUrl={config.houseTestUrl}
+          // Always set by the time this step renders — AccountStep wrote the
+          // DB-confirmed role. Falls back to the role that requires the most.
+          role={draft.resolvedRole ?? "general"}
+          onPatch={patch}
+          onBack={goBack}
+          onNext={goNext}
+        />
       )}
 
       {step === "resume" && <ResumeStep draft={draft} onPatch={patch} onBack={goBack} onFinish={finish} />}
-    </div>
-  );
-}
 
-function ProgressIndicator({ steps, currentIndex }: { steps: StepKey[]; currentIndex: number }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex gap-1.5">
-        {steps.map((s, i) => (
-          <div
-            key={s}
-            className={`h-1.5 flex-1 rounded-full ${i <= currentIndex ? "bg-signal" : "bg-line"}`}
-            aria-hidden="true"
-          />
-        ))}
-      </div>
-      <p className="text-xs font-medium text-muted">
-        Step {currentIndex + 1} of {steps.length} · {STEP_LABEL[steps[currentIndex]]}
-      </p>
-    </div>
-  );
-}
-
-function StepCard({
-  title,
-  children,
-  onBack,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onBack?: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-5 rounded-xl border border-line bg-surface p-6">
-      <h2 className="font-display text-lg font-bold text-ink">{title}</h2>
-      {children}
-      {onBack ? (
-        <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-muted hover:text-ink">
-          ← Back
-        </button>
-      ) : null}
+      {finishError ? <StepError message={finishError} /> : null}
     </div>
   );
 }
@@ -591,359 +562,3 @@ function AboutYouStep({
   );
 }
 
-/**
- * Shown when a profile-step action reports sessionExpired (see
- * requireWizardSession in join/actions.ts) — a plain retry can't fix a
- * missing session, so this offers a sign-in link instead. callbackUrl sends
- * the user straight back to /join, where the sessionStorage draft (still
- * intact — nothing here clears it) picks up at the same step.
- */
-function StepError({ message, sessionExpired }: { message: string; sessionExpired?: boolean }) {
-  return (
-    <div role="alert" className="flex flex-col gap-2 text-sm font-medium text-alert">
-      <p>{message}</p>
-      {sessionExpired ? (
-        <a href="/signin?callbackUrl=%2Fjoin" className="self-start font-semibold text-signal underline underline-offset-2">
-          Sign in again
-        </a>
-      ) : null}
-    </div>
-  );
-}
-
-function ContactStep({
-  draft,
-  onPatch,
-  onBack,
-  onNext,
-  isLastStep,
-  onFinish,
-}: {
-  draft: Draft;
-  onPatch: (f: Partial<Draft>) => void;
-  onBack: () => void;
-  onNext: () => void;
-  isLastStep: boolean;
-  onFinish: () => void;
-}) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
-
-  async function submit() {
-    if (!draft.phone.trim() || !draft.personalEmail.trim()) {
-      setError("Phone and personal email are required.");
-      return;
-    }
-    setPending(true);
-    setError(null);
-    setSessionExpired(false);
-    try {
-      const result = await updateContactAction({
-        phone: draft.phone,
-        personalEmail: draft.personalEmail,
-        tshirtSize: draft.tshirtSize || undefined,
-      });
-      if (result.error) {
-        setError(result.error);
-        setSessionExpired(Boolean(result.sessionExpired));
-        return;
-      }
-      if (isLastStep) onFinish();
-      else onNext();
-    } catch {
-      setError("Something went wrong saving your info. Your answers are safe — try again.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <StepCard title="Contact" onBack={onBack}>
-      <Field label="Phone" required>
-        {(id) => (
-          <input id={id} type="tel" value={draft.phone} onChange={(e) => onPatch({ phone: e.target.value })} className={inputClass} />
-        )}
-      </Field>
-      <Field label="Personal email" required help={coreField("personalEmail").helpText}>
-        {(id) => (
-          <input
-            id={id}
-            type="email"
-            value={draft.personalEmail}
-            onChange={(e) => onPatch({ personalEmail: e.target.value })}
-            className={inputClass}
-          />
-        )}
-      </Field>
-      <Field label="T-shirt size (optional)">
-        {(id) => (
-          <select
-            id={id}
-            value={draft.tshirtSize}
-            onChange={(e) => onPatch({ tshirtSize: e.target.value as ShirtSize })}
-            className={selectClass}
-          >
-            <option value="">Select…</option>
-            {SHIRT_SIZE_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        )}
-      </Field>
-      {error ? <StepError message={error} sessionExpired={sessionExpired} /> : null}
-      <Button type="button" onClick={submit} disabled={pending || sessionExpired}>
-        {pending ? "Saving…" : isLastStep ? "Finish" : "Continue"}
-      </Button>
-    </StepCard>
-  );
-}
-
-function MembershipStep({
-  draft,
-  membershipSiteUrl,
-  nationalMembershipUrl,
-  onPatch,
-  onBack,
-  onNext,
-}: {
-  draft: Draft;
-  membershipSiteUrl: string;
-  nationalMembershipUrl: string;
-  onPatch: (f: Partial<Draft>) => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
-
-  async function submit() {
-    if (draft.duesPaid === undefined || draft.nationalMember === undefined) {
-      setError("Answer both questions to continue.");
-      return;
-    }
-    setPending(true);
-    setError(null);
-    setSessionExpired(false);
-    try {
-      const result = await updateMembershipAction({
-        duesPaid: draft.duesPaid,
-        nationalMember: draft.nationalMember,
-        nsbeMembershipId: draft.nsbeMembershipId || undefined,
-      });
-      if (result.error) {
-        setError(result.error);
-        setSessionExpired(Boolean(result.sessionExpired));
-        return;
-      }
-      onNext();
-    } catch {
-      setError("Something went wrong saving your info. Your answers are safe — try again.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <StepCard title="Membership" onBack={onBack}>
-      <Field label="Have you paid your chapter dues?" required>
-        {(id, describedBy) => (
-          <div className="flex flex-col gap-2">
-            <YesNo id={id} label="Dues paid" value={draft.duesPaid} onChange={(v) => onPatch({ duesPaid: v })} describedBy={describedBy} />
-            <Description
-              text="If no, pay through the [Howard NSBE Membership Website]({{membershipSiteUrl}})."
-              vars={{ membershipSiteUrl }}
-            />
-          </div>
-        )}
-      </Field>
-      <Field label="Are you a National NSBE member?" required>
-        {(id, describedBy) => (
-          <div className="flex flex-col gap-2">
-            <YesNo
-              id={id}
-              label="National member"
-              value={draft.nationalMember}
-              onChange={(v) => onPatch({ nationalMember: v })}
-              describedBy={describedBy}
-            />
-            <Description
-              text="Not a member yet? Join or renew at [NSBE.org]({{nationalMembershipUrl}})."
-              vars={{ nationalMembershipUrl }}
-            />
-          </div>
-        )}
-      </Field>
-      {/*
-        Its own field below the national question, not indented under it and
-        not conditional on the answer — a member can hold an ID from a prior
-        year, or have one pending, while answering No. Optional: the step's
-        Continue gate (see submit above) never looks at it.
-      */}
-      <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText}>
-        {(id, describedBy) => (
-          <input
-            id={id}
-            value={draft.nsbeMembershipId}
-            onChange={(e) => onPatch({ nsbeMembershipId: e.target.value })}
-            aria-describedby={describedBy}
-            className={inputClass}
-          />
-        )}
-      </Field>
-      {error ? <StepError message={error} sessionExpired={sessionExpired} /> : null}
-      <Button type="button" onClick={submit} disabled={pending || sessionExpired}>
-        {pending ? "Saving…" : "Continue"}
-      </Button>
-    </StepCard>
-  );
-}
-
-function HouseStep({
-  draft,
-  houses,
-  houseTestUrl,
-  onPatch,
-  onBack,
-  onNext,
-}: {
-  draft: Draft;
-  houses: House[];
-  houseTestUrl: string;
-  onPatch: (f: Partial<Draft>) => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  // Always set by the time this step renders — the account exists and
-  // AccountStep wrote the DB-confirmed role. Falls back to the role that
-  // requires the most (general) rather than assuming an exemption; the
-  // server re-derives from the roster either way.
-  const role: Role = draft.resolvedRole ?? "general";
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
-
-  async function submit() {
-    const validationError = validateHouseStep(
-      {
-        houseSkipped: draft.houseSkipped,
-        house: draft.house,
-        houseProofFileId: draft.houseProofFileId,
-      },
-      role,
-    );
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setPending(true);
-    setError(null);
-    setSessionExpired(false);
-    try {
-      const result = await setHouseAction({
-        // Always sent, never inferred from absent fields — the server
-        // rejects a House step that carries no answer at all.
-        houseSkipped: draft.houseSkipped,
-        house: draft.houseSkipped ? undefined : draft.house || undefined,
-        houseProofFileId: draft.houseSkipped ? undefined : draft.houseProofFileId,
-      });
-      if (result.error) {
-        setError(result.error);
-        setSessionExpired(Boolean(result.sessionExpired));
-        return;
-      }
-    } catch {
-      setError("Something went wrong saving your info. Your answers are safe — try again.");
-      return;
-    } finally {
-      setPending(false);
-    }
-    onNext();
-  }
-
-  return (
-    <StepCard title="NSBE House" onBack={onBack}>
-      <HouseBlock
-        houses={houses}
-        houseTestUrl={houseTestUrl}
-        role={role}
-        value={{
-          house: draft.house || undefined,
-          houseProofFileId: draft.houseProofFileId,
-          houseFilename: draft.houseFilename,
-          houseSkipped: draft.houseSkipped,
-        }}
-        onChange={onPatch}
-        disabled={pending}
-      />
-      {error ? <StepError message={error} sessionExpired={sessionExpired} /> : null}
-      <Button type="button" onClick={submit} disabled={pending || sessionExpired}>
-        {pending ? "Saving…" : "Continue"}
-      </Button>
-    </StepCard>
-  );
-}
-
-function ResumeStep({
-  draft,
-  onPatch,
-  onBack,
-  onFinish,
-}: {
-  draft: Draft;
-  onPatch: (f: Partial<Draft>) => void;
-  onBack: () => void;
-  onFinish: () => void;
-}) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
-
-  async function submit() {
-    if (draft.resumeFileId) {
-      setPending(true);
-      setError(null);
-      setSessionExpired(false);
-      try {
-        const result = await setResumeAction(draft.resumeFileId);
-        if (result.error) {
-          setError(result.error);
-          setSessionExpired(Boolean(result.sessionExpired));
-          return;
-        }
-      } catch {
-        setError("Something went wrong saving your info. Your answers are safe — try again.");
-        return;
-      } finally {
-        setPending(false);
-      }
-    }
-    onFinish();
-  }
-
-  return (
-    <StepCard title="Resume" onBack={onBack}>
-      <FileDropField
-        label="Upload your resume (optional)"
-        help="By uploading, you consent to Howard NSBE sharing it with employers for recruiting and professional opportunities."
-        kind="resume"
-        accept=".pdf,.doc,.docx"
-        filename={draft.resumeFilename ?? null}
-        onUploaded={(fileId, filename) => onPatch({ resumeFileId: fileId, resumeFilename: filename })}
-        onClear={() => onPatch({ resumeFileId: undefined, resumeFilename: undefined })}
-      />
-      {error ? <StepError message={error} sessionExpired={sessionExpired} /> : null}
-      <div className="flex gap-3">
-        <Button type="button" onClick={submit} disabled={pending || sessionExpired}>
-          {pending ? "Finishing…" : "Finish"}
-        </Button>
-        <Button type="button" variant="secondary" onClick={onFinish}>
-          Do this later
-        </Button>
-      </div>
-    </StepCard>
-  );
-}

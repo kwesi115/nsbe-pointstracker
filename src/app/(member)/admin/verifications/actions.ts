@@ -55,12 +55,22 @@ export async function approveAction(_prev: VerificationActionState, formData: Fo
   return approveOne(tab, String(formData.get("email") ?? ""));
 }
 
-/** House keeps the plain reject flow (note optional, unchanged). Dues/national go through revokeAction instead — a note is required there. */
+/**
+ * Rejecting a House claim. A note is REQUIRED, same as revoking a dues or
+ * national claim — an admin overruling what a member submitted has to say why,
+ * and the note is what the member is told and what the log records.
+ *
+ * It used to be optional here, which dated from when the only reject control was
+ * a bare button with nowhere to type one. Now that rejection happens next to the
+ * screenshot being judged (see components/admin/HouseProofViewer.tsx), the note
+ * has a place to live and is enforced on both sides.
+ */
 export async function rejectAction(_prev: VerificationActionState, formData: FormData): Promise<VerificationActionState> {
   const session = await requireVerificationsWriteAction();
   const actor = session.user.email;
   const e = normalizeEmail(String(formData.get("email") ?? ""));
-  const note = String(formData.get("reason") ?? "").trim() || undefined;
+  const note = String(formData.get("reason") ?? "").trim();
+  if (!note) return { error: "A note is required to reject a House claim." };
   return run(() => rejectHouse(session.user.orgId, e, actor, note));
 }
 

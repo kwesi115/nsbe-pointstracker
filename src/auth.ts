@@ -149,6 +149,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.role = "general";
         session.user.mustChangePassword = false;
         session.user.status = "pending";
+        // No identity to look up, so nothing to complete — the member layout's
+        // own requireSession() rejects this session before the gate is reached.
+        session.user.signupComplete = true;
         return session;
       }
       // Re-read role/mustChangePassword/status on every session check, same
@@ -158,6 +161,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.role = role;
       session.user.mustChangePassword = authRecord?.mustChangePassword ?? false;
       session.user.status = authRecord?.status ?? "pending";
+      // Same live-read reasoning, and for this flag it is load-bearing rather
+      // than merely tidy: (member)/layout.tsx redirects a mid-signup account to
+      // /join/resume, and /join/resume redirects a finished one back out. A
+      // value that could lag behind the database would make those two guards
+      // disagree, which is precisely a redirect loop. Reading it here — from the
+      // record getAuthRecord already fetched, so at no extra cost — means both
+      // guards decide from the same fresh row, through the same predicate
+      // (lib/signup.ts signupIsComplete — see AuthRecord.signupComplete for why
+      // it is the verdict and not the column). An absent record reads as
+      // complete: an account that no longer exists must not be herded into a
+      // signup flow.
+      session.user.signupComplete = authRecord?.signupComplete ?? true;
       return session;
     },
   },

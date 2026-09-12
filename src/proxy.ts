@@ -74,6 +74,11 @@ export async function proxy(request: NextRequest) {
       return redirectTo("/events");
     }
 
+    // /join and /join/resume are org-required paths below, but a signed-in
+    // member's org comes from their session rather than the cookie — and a
+    // resuming signup that got bounced to "/" for a missing cookie would be
+    // stranded outside the only page that can finish it. Let it through; the
+    // page itself resolves the org from the session.
     if (!isProtected(pathname)) {
       return next();
     }

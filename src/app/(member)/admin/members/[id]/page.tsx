@@ -1,3 +1,4 @@
+import { SquareArrowOutUpRight } from "lucide-react";
 import { guardAdminPage } from "@/lib/access-guards";
 import AccessDenied from "../../_components/AccessDenied";
 import { notFound } from "next/navigation";
@@ -124,7 +125,19 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Resume</h2>
         {member.resumeFileId ? (
           <div className="flex flex-col gap-1 text-sm">
-            <a href={`/api/files/${member.resumeFileId}`} target="_blank" rel="noopener noreferrer" className="font-medium text-signal underline underline-offset-2">
+            {/*
+              Already a real link to the authenticated endpoint, which serves the
+              PDF inline with Content-Disposition: inline — so the browser opens
+              it in its own viewer in a new tab. Never a thumbnail, so there is no
+              dead-image problem here; the icon just makes the new tab explicit.
+            */}
+            <a
+              href={`/api/files/${member.resumeFileId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-fit items-center gap-1.5 font-medium text-signal underline underline-offset-2"
+            >
+              <SquareArrowOutUpRight size={14} aria-hidden="true" />
               View resume
             </a>
             <p className="text-xs text-muted">

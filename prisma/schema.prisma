@@ -218,6 +218,19 @@ model User {
   resumeUpdatedAt DateTime?
   resumeConsentAt DateTime?
 
+  // The signup latch — null means this account is still mid-signup and every
+  // protected route sends it to /join/resume (see lib/signup.ts, which derives
+  // WHERE to resume from the profile data; no step index is stored anywhere).
+  //
+  // A latch rather than a computed predicate because two of the wizard's steps
+  // are completed by declining them: "I haven't taken the test yet" on House
+  // writes nothing at all by design (see clearHouseAssignment and
+  // docs/CLAIM-STATE.md), and the resume upload is skippable. Without this
+  // column those members would be asked the same question forever.
+  //
+  // Backfilled for accounts that predate it — see the migration.
+  signupCompletedAt DateTime?
+
   /**
    * Displayed on the internal E-Board leaderboard only — see lib/repo.ts getEboardBoardRows.
    */

@@ -53,6 +53,7 @@ import { verifyCode } from "./code";
 import { AppError } from "./errors";
 import { claimState, type ClaimState } from "./claim-state";
 import { CORE_FORM_VERSION, getMissingFields, houseSelfVerifies, validateCoreAnswers, validateReducedCoreAnswers } from "./core-form";
+import { missingSignupSteps, signupIsComplete, type StepKey } from "./signup";
 import { validateAnswers, serializeAnswers } from "./forms";
 import { memberDisplayName } from "./format";
 import { parseHouses, type House } from "./houses";
@@ -316,6 +317,7 @@ function userToMember(u: UserModel): Member {
     resumeFileId: u.resumeFileId,
     resumeUpdatedAt: u.resumeUpdatedAt,
     resumeConsentAt: u.resumeConsentAt,
+    signupCompletedAt: u.signupCompletedAt,
   };
 }
 
@@ -338,6 +340,8 @@ function userToAuthRecord(u: UserModel): AuthRecord {
     role: roleFromDb(u.role),
     mustChangePassword: u.mustChangePassword,
     status: statusFromDb(u.status),
+    // The verdict, computed once here from the whole row — see AuthRecord.
+    signupComplete: signupIsComplete(userToMember(u)),
   };
 }
 
@@ -1707,6 +1711,67 @@ export async function clearHouseAssignment(orgId: string, email: string, actor: 
   });
 }
 
+// ---------------------------------------------------------------------------
+// The signup latch (User.signupCompletedAt — see lib/signup.ts).
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything lib/signup.ts needs to decide whether a signup is finished and,
+ * if not, where it resumes. One row read; nothing derived here, because the
+ * rules live in lib/signup.ts and must have exactly one implementation.
+ *
+ * Returns the whole Member — which satisfies SignupUser structurally — so the
+ * resume page can seed its form from the same read, rather than fetching the
+ * row twice for two views of it.
+ */
+export async function getSignupUser(orgId: string, email: string): Promise<Member | null> {
+  const row = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: normalizeEmail(email) } } });
+  if (!row) return null;
+  // Member already carries every field SignupUser needs, the latch included.
+  return userToMember(row);
+}
+
+/**
+ * Latches the signup as finished — the ONE place that writes
+ * signupCompletedAt outside the backfill migration and the seed.
+ *
+ * Refuses unless lib/signup.ts requiredSignupFieldsComplete agrees, re-derived
+ * here from the row rather than trusted from the client: the resume flow's
+ * "am I done" and the server's "may I latch" must be the same question, or a
+ * crafted request could buy its way into the app with an empty profile.
+ *
+ * `houseSkipped` is the single exception, and it is the same trust
+ * join/actions.ts setHouseAction has always taken: pressing "I haven't taken
+ * the test yet" is a client-side declaration by nature — it writes nothing, so
+ * there is nothing for the server to read back (see clearHouseAssignment and
+ * docs/CLAIM-STATE.md).
+ *
+ * Idempotent: an already-latched account returns its existing timestamp rather
+ * than moving it, so a double-submitted finish is harmless.
+ */
+export async function completeSignup(
+  orgId: string,
+  email: string,
+  options: { houseSkipped?: boolean } = {},
+): Promise<{ completedAt: Date; missingSteps: StepKey[] }> {
+  const e = normalizeEmail(email);
+  const user = await getSignupUser(orgId, e);
+  if (!user) throw new AppError("NOT_FOUND", "Member not found");
+  if (user.signupCompletedAt) return { completedAt: user.signupCompletedAt, missingSteps: [] };
+
+  const missingSteps = missingSignupSteps(user, options);
+  if (missingSteps.length > 0) {
+    throw new AppError("VALIDATION_FAILED", "There are still steps left to finish.");
+  }
+
+  const completedAt = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { signupCompletedAt: completedAt } });
+    await logAdminAction(tx, orgId, { actor: e, action: "complete_signup", target: e });
+  });
+  return { completedAt, missingSteps: [] };
+}
+
 export async function setResume(orgId: string, email: string, resumeFileId: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   const now = new Date();
@@ -1836,6 +1901,32 @@ export function canAccessFile(file: { ownerEmail: string }, requester: { email: 
     requester.role === "eboard" ||
     requester.role === "admin"
   );
+}
+
+/**
+ * Records that someone looked at a file they do not own — the FILES domain's
+ * audit requirement, written by GET /api/files/[id] on every such request.
+ *
+ * Owner views are deliberately NOT logged: a member opening their own resume is
+ * not an access event anyone needs to answer for, and logging it would bury the
+ * entries that matter under noise.
+ *
+ * This got more load-bearing the moment House screenshots became properly
+ * viewable (see components/ui/ImageLightbox.tsx). Easier viewing means more
+ * viewing, and the trail is what keeps that accountable — so one row per
+ * non-owner request, including the two a thumbnail-then-lightbox open produces.
+ * Under-reporting would be worse than repetition.
+ */
+export async function logFileView(
+  orgId: string,
+  entry: { actor: string; fileId: string; kind: FileKind; ownerEmail: string; originalName: string },
+): Promise<void> {
+  await logSystemAdminEvent(orgId, {
+    actor: entry.actor,
+    action: "view_file",
+    target: entry.fileId,
+    detail: `${entry.kind} of ${entry.ownerEmail} (${entry.originalName})`,
+  });
 }
 
 /** Internal to the file-serving route only — carries storageKey, never exposed elsewhere. */

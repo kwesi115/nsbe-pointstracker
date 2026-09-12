@@ -128,6 +128,9 @@ function makeMember(overrides: Partial<Member> = {}): Member {
     resumeFileId: null,
     resumeUpdatedAt: null,
     resumeConsentAt: null,
+    // Irrelevant to standings, but Member requires it — these fixtures are all
+    // established members, so signup is long finished (see lib/signup.ts).
+    signupCompletedAt: new Date("2026-01-01T00:00:00Z"),
     ...overrides,
   };
 }

@@ -118,6 +118,9 @@ export interface Member {
   resumeFileId: string | null;
   resumeUpdatedAt: Date | null;
   resumeConsentAt: Date | null;
+
+  /** Set when the signup wizard finished; null while the account is still mid-signup. See lib/signup.ts. */
+  signupCompletedAt: Date | null;
 }
 
 export interface UploadedFile {
@@ -146,6 +149,18 @@ export interface AuthRecord {
   role: Role;
   mustChangePassword: boolean;
   status: UserStatus;
+  /**
+   * Whether signup is finished, as lib/signup.ts signupIsComplete defines it —
+   * the LATCH OR an already-complete profile, never just the column.
+   *
+   * The verdict rather than the raw timestamp, deliberately: the member layout
+   * and /join/resume redirect on opposite answers to this question, so if one of
+   * them re-derived it even slightly differently the two would bounce a member
+   * between them forever. Exposing the answer instead of the input makes that
+   * mistake impossible to make. Carried on the record the session callback
+   * already reads on every auth() call, so the gate costs no extra query.
+   */
+  signupComplete: boolean;
 }
 
 export interface Org {

@@ -1,21 +1,15 @@
 "use client";
 
-import { approveAction, rejectAction, type VerificationActionState } from "@/app/(member)/admin/verifications/actions";
 import HouseCell from "@/components/admin/HouseCell";
-import ActionButton from "@/components/ui/ActionButton";
+import HouseProofViewer from "@/components/admin/HouseProofViewer";
 import Badge from "@/components/ui/Badge";
-import { useToast } from "@/components/ui/Toast";
 import type { House } from "@/lib/houses";
 import type { MemberWithStats } from "@/lib/repo";
 
 type HouseMember = Pick<MemberWithStats, "email" | "house" | "houseState" | "houseProofFileId" | "firstName" | "lastName">;
 
-const INITIAL_STATE: VerificationActionState = { error: null };
-
 /** Current House, verification state, the uploaded screenshot inline, and the admin correction control (HouseCell — the only path to changing a verified House). */
 export default function AdminHousePanel({ member, houses }: { member: HouseMember; houses: House[] }) {
-  const { show } = useToast();
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-4">
@@ -28,38 +22,36 @@ export default function AdminHousePanel({ member, houses }: { member: HouseMembe
             </Badge>
           </div>
         </div>
-        {member.houseState === "pending" ? (
-          <div className="flex gap-2">
-            <ActionButton<VerificationActionState>
-              action={rejectAction}
-              initialState={INITIAL_STATE}
-              payload={{ email: member.email }}
-              label="Reject"
-              variant="secondary"
-              onSuccess={() => show("House rejected")}
-              onError={(message) => show(message, "error")}
-            />
-            <ActionButton<VerificationActionState>
-              action={approveAction}
-              initialState={INITIAL_STATE}
-              payload={{ tab: "house", email: member.email }}
-              label="Verify"
-              onSuccess={() => show("House verified")}
-              onError={(message) => show(message, "error")}
-            />
-          </div>
+      </div>
+
+      {/*
+        The screenshot, readable. Clicking it opens the full-size view, which
+        carries Verify and Reject alongside the House the member claimed — the
+        panel used to put those buttons up here, far from the 160px crop they
+        were supposedly a judgement on.
+
+        Rejecting requires a note (see verifications/actions.ts rejectAction),
+        which is another reason the decision belongs in the viewer: that is where
+        there is room to type one.
+      */}
+      <div className="flex flex-col gap-2">
+        <HouseProofViewer
+          subject={{
+            email: member.email,
+            name: `${member.firstName} ${member.lastName}`.trim() || member.email,
+            house: member.house,
+            houseProofFileId: member.houseProofFileId,
+          }}
+          size="lg"
+        />
+        {member.houseProofFileId ? (
+          <p className="text-xs text-muted">
+            {member.houseState === "pending"
+              ? "Open it to read the House and verify or reject."
+              : "Open it to view full size."}
+          </p>
         ) : null}
       </div>
-      {member.houseProofFileId ? (
-        // eslint-disable-next-line @next/next/no-img-element -- authenticated endpoint, not a static asset
-        <img
-          src={`/api/files/${member.houseProofFileId}`}
-          alt={`${member.firstName} ${member.lastName}'s House test result`}
-          className="h-40 w-40 rounded-lg border border-line object-cover"
-        />
-      ) : (
-        <p className="text-sm text-muted">No proof uploaded.</p>
-      )}
     </div>
   );
 }

@@ -353,6 +353,9 @@ async function seedInitialAdmins(orgId: string) {
         role: Role.ADMIN,
         status: UserStatus.ACTIVE,
         mustChangePassword: false,
+        // Same reasoning as the officer accounts above — an ADMIN login has no
+        // member profile to complete, so it is never gated.
+        signupCompletedAt: new Date(),
       },
     });
     console.log(`Created Admin account ${email} — password: ${password}`);
@@ -393,7 +396,16 @@ async function seedHardcodedAdmins(orgId: string): Promise<void> {
   for (const { email, eboardPosition } of HARDCODED_ADMINS) {
     const existing = await prisma.user.findUnique({ where: { orgId_email: { orgId, email } } });
     if (existing) {
-      await prisma.user.update({ where: { id: existing.id }, data: { role: Role.ADMIN, eboardPosition } });
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          role: Role.ADMIN,
+          eboardPosition,
+          // Latch on re-run too, for an officer row that predates the column
+          // and so would otherwise be gated on their next sign-in.
+          signupCompletedAt: existing.signupCompletedAt ?? new Date(),
+        },
+      });
       skipped.push(email);
       continue;
     }
@@ -409,6 +421,12 @@ async function seedHardcodedAdmins(orgId: string): Promise<void> {
         status: UserStatus.ACTIVE,
         mustChangePassword: false,
         eboardPosition,
+        // Never send a seeded officer through the signup wizard. An ADMIN
+        // account has no member profile to finish (see lib/signup.ts stepsFor,
+        // whose ADMIN step list stops at the account step), and these seven
+        // deliberately carry a blank lastName, so latching it explicitly is
+        // belt and braces on top of that.
+        signupCompletedAt: new Date(),
       },
     });
     // actorId is intentionally null — there's no human actor for a seed run,
@@ -640,6 +658,14 @@ async function seedFakeMembers(orgId: string, verifierId: string | null): Promis
       role: Role.GENERAL,
       status: UserStatus.ACTIVE,
       mustChangePassword: false,
+      // These fixtures stand for established members, not people partway
+      // through signing up: most of them deliberately have no House and no
+      // phone/personal email, which is exactly what lib/signup.ts treats as
+      // mid-signup. Latching them keeps the fixture useful for what it is FOR
+      // — the leaderboard, standings and the verification queues — instead of
+      // parking all 40 on /join/resume. The signup flow is exercised by
+      // creating an account, and by src/lib/signup.test.ts.
+      signupCompletedAt: new Date(),
       ...eligibilityFor(i, verifierId),
     };
 
@@ -702,6 +728,8 @@ async function seedFakeEboardMembers(orgId: string, verifierId: string | null): 
         role: Role.EBOARD,
         status: UserStatus.ACTIVE,
         mustChangePassword: false,
+        // Established-member fixtures, same as the 40 GENERAL ones above.
+        signupCompletedAt: new Date(),
       },
       create: {
         orgId,
@@ -722,6 +750,7 @@ async function seedFakeEboardMembers(orgId: string, verifierId: string | null): 
         nationalVerifiedAt: now,
         nationalVerifiedById: verifierId,
         membershipSeason: SEASON,
+        signupCompletedAt: now,
       },
     });
   }
