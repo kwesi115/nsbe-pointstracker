@@ -14,7 +14,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import Field, { inputClass } from "@/components/ui/Field";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
-import { formatDateTime, memberDisplayName } from "@/lib/format";
+import { formatClassification, formatDateTime, memberDisplayName } from "@/lib/format";
 import type { AttendeePage, AttendeeRow, RemoveRegistrationImpact } from "@/lib/repo";
 import type { ActionResult, UpdatePointsState } from "@/app/(member)/admin/attendance/actions";
 
@@ -169,7 +169,7 @@ export default function AttendeeTable({
                 <tr key={r.registrationId} className="border-b border-line last:border-0">
                   <td className={tdClass}>{memberDisplayName(r.firstName, r.lastName, r.email)}</td>
                   <td className={tdClass}>{r.email}</td>
-                  <td className={tdClass}>{r.classification || "—"}</td>
+                  <td className={tdClass}>{formatClassification(r.classification) || "—"}</td>
                   <td className={tdClass}>{r.house || "—"}</td>
                   <td className={tdClass}>{r.checkedInAt ? formatDateTime(r.checkedInAt) : "—"}</td>
                   <td className={`${tdClass} numeric`}>{r.pointsAwarded}</td>

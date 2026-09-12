@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  SHIRT_SIZE_OPTIONS,
+  coreField,
   getMissingFields,
   houseSelfVerifies,
   parseDescription,
@@ -225,21 +227,30 @@ describe("getMissingFields", () => {
     expect(getMissingFields(freshOfficer, EBOARD_EVENT, { SEASON })).toEqual(["firstName"]);
   });
 
-  it("an EBOARD member is prompted exactly like a GENERAL one on an ALL-audience event", () => {
+  it("an EBOARD member is prompted exactly like a GENERAL one EXCEPT for House", () => {
     const gaps = { house: "", houseVerifiedAt: null, resumeFileId: null, duesPaidReported: null, membershipSeason: "" };
     const general: GetMissingFieldsUser = { ...COMPLETE_USER, ...gaps, role: "general" };
     const officer: GetMissingFieldsUser = { ...COMPLETE_USER, ...gaps, role: "eboard" };
-    expect(getMissingFields(officer, ALL_EVENT, { SEASON })).toEqual(getMissingFields(general, ALL_EVENT, { SEASON }));
+
+    // Identical on everything else — an officer is still a student with a shirt
+    // size, dues and a national membership.
+    expect(getMissingFields(officer, ALL_EVENT, { SEASON })).toEqual(
+      getMissingFields(general, ALL_EVENT, { SEASON }).filter((f) => f !== "house"),
+    );
   });
 
-  it("an EBOARD member with a missing House is prompted at their next check-in on an ALL-audience event", () => {
+  it("an EBOARD member is NOT prompted for House at check-in — their signup never asked for it", () => {
+    // The House step is skipped entirely for an EBOARD signup (see
+    // lib/signup.ts stepsFor), so asking here would re-open a question with no
+    // step left to answer it in.
     const officer: GetMissingFieldsUser = { ...COMPLETE_USER, role: "eboard", house: "", houseVerifiedAt: null };
-    expect(getMissingFields(officer, ALL_EVENT, { SEASON })).toContain("house");
-  });
-
-  it("the same EBOARD member is NOT prompted for their House on an EBOARD_ONLY event — audience, not role", () => {
-    const officer: GetMissingFieldsUser = { ...COMPLETE_USER, role: "eboard", house: "", houseVerifiedAt: null };
+    expect(getMissingFields(officer, ALL_EVENT, { SEASON })).not.toContain("house");
     expect(getMissingFields(officer, EBOARD_EVENT, { SEASON })).not.toContain("house");
+  });
+
+  it("a GENERAL member with no House still IS prompted — the rule is role, not a blanket removal", () => {
+    const member: GetMissingFieldsUser = { ...COMPLETE_USER, role: "general", house: "", houseVerifiedAt: null };
+    expect(getMissingFields(member, ALL_EVENT, { SEASON })).toContain("house");
   });
 
   it("an ADMIN is never prompted to complete a member profile, on either audience", () => {
@@ -512,5 +523,51 @@ describe("getMissingFields — t-shirt size", () => {
   it("is not asked of an ADMIN, who never had a member profile", () => {
     const admin = { ...COMPLETE_USER, role: "admin" as const, tshirtSize: "" as const };
     expect(getMissingFields(admin, ALL_EVENT, { SEASON })).not.toContain("tshirtSize");
+  });
+});
+
+describe("t-shirt sizes — S through XL", () => {
+  it("offers exactly S, M, L, XL", () => {
+    expect(SHIRT_SIZE_OPTIONS).toEqual(["S", "M", "L", "XL"]);
+  });
+
+  it("no longer offers XS, XXL or XXXL", () => {
+    for (const removed of ["XS", "XXL", "XXXL"]) {
+      expect(SHIRT_SIZE_OPTIONS as string[]).not.toContain(removed);
+    }
+  });
+
+  it("an account whose size was removed reads as unset, and is re-prompted", () => {
+    // The migration nulled those out rather than guessing a replacement (see
+    // prisma/migrations/20260913090000_shirt_sizes_s_to_xl). A null size is
+    // exactly the state getMissingFields asks about.
+    const reset: GetMissingFieldsUser = { ...COMPLETE_USER, tshirtSize: "" };
+    expect(getMissingFields(reset, ALL_EVENT, { SEASON })).toContain("tshirtSize");
+  });
+
+  it("a surviving size is left alone and asks nothing", () => {
+    for (const size of SHIRT_SIZE_OPTIONS) {
+      expect(getMissingFields({ ...COMPLETE_USER, tshirtSize: size }, ALL_EVENT, { SEASON })).not.toContain("tshirtSize");
+    }
+  });
+});
+
+describe("Student ID copy", () => {
+  it("guides with the expected prefix and shape", () => {
+    expect(coreField("studentId").helpText).toBe("Starts with 00");
+    expect(coreField("studentId").placeholder).toBe("00XXXXXX");
+  });
+
+  it("does NOT enforce the prefix — an ID that legitimately differs must still save", () => {
+    // Guidance only: a hard rule would lock out a transfer or an older record,
+    // and a member who cannot check in is worse than a mistyped digit.
+    const ctx = ctxFor(["studentId"], "general");
+    for (const studentId of ["00123456", "12345678", "A1234567", "9"]) {
+      expect(() => validateCoreAnswers(ctx, validAnswers({ studentId }))).not.toThrow();
+    }
+  });
+
+  it("still requires SOMETHING when the form asked for it", () => {
+    expect(() => validateCoreAnswers(ctxFor(["studentId"], "general"), validAnswers({ studentId: "" }))).toThrow(AppError);
   });
 });

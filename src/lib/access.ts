@@ -163,7 +163,7 @@ export function denialMessage(denial: Denial): string {
  */
 export const ADMIN_SURFACES = [
   { href: "/admin", label: "Events", requires: { level: "eboard" } },
-  { href: "/admin/members", label: "Members", requires: { level: "admin" } },
+  { href: "/admin/members", label: "Member Directory", requires: { level: "admin" } },
   {
     href: "/admin/verifications",
     label: "Membership audit",

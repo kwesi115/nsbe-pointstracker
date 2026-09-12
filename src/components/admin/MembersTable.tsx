@@ -13,7 +13,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyValue } from "@/components/StatusIcon";
-import { formatDateTime, memberDisplayName } from "@/lib/format";
+import { formatClassification, formatDateTime, memberDisplayName } from "@/lib/format";
 import type { House } from "@/lib/houses";
 import type { MemberFilters, MembersPage, MemberWithStats } from "@/lib/repo";
 import { loadMembersPageAction } from "@/app/(member)/admin/members/pagination-actions";
@@ -263,7 +263,7 @@ export default function MembersTable({
                     </Link>
                   </td>
                   <td className={tdClass}>{m.email}</td>
-                  <td className={tdClass}>{m.classification || <EmptyValue />}</td>
+                  <td className={tdClass}>{m.classification ? formatClassification(m.classification) : <EmptyValue />}</td>
                   <td className={tdClass}>{m.major || <EmptyValue />}</td>
                   <td className={tdClass}>{m.tshirtSize || <EmptyValue />}</td>
                   <td className={tdClass}>{m.nsbeMembershipId || <EmptyValue />}</td>

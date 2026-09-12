@@ -60,13 +60,16 @@ export type AccountType = "general" | "eboard" | "admin" | null;
  * skipped. The two are deliberately separate: the picker is never
  * authorization, only UI routing (see JoinWizard.tsx's JoinCodeStep copy).
  *
- * ADMIN is the ONLY role that skips anything. An E-Board member is a student
- * with a House, a shirt size, dues and a national membership just like every
- * other member, so an EBOARD signup is identical to a GENERAL one apart from
- * the join code step that resolved the role in the first place. An ADMIN
- * account is a staff login, not a member profile: it stops after the account
- * step (email/password plus name, student ID, classification and major),
- * skipping About you, Contact, Membership, House and Resume.
+ * An ADMIN account is a staff login, not a member profile: it stops after the
+ * account step (email/password plus name, student ID, classification and
+ * major), skipping About you, Contact, Membership, House and Resume.
+ *
+ * An EBOARD signup answers everything a GENERAL one does EXCEPT House. An
+ * officer is otherwise a student with a shirt size, dues and a national
+ * membership like any member, but the House question — the personality test link
+ * and its screenshot — is not asked of them at signup, and lib/core-form.ts
+ * getMissingFields correspondingly never asks for it at check-in either. It
+ * remains available as an optional field on /account.
  *
  * Note this is about WHO IS SIGNING UP. The reduced core form on EBOARD_ONLY
  * events is a separate rule about WHAT EVENT you're at — see
@@ -77,7 +80,10 @@ export function stepsFor(accountType: AccountType, resolvedRole: Role | null): S
   if (accountType !== "general") base.push("code");
   base.push("account");
   if (resolvedRole === "admin") return base;
-  return [...base, "about", "contact", "membership", "house", "resume"];
+  const profile: StepKey[] = ["about", "contact", "membership"];
+  if (resolvedRole !== "eboard") profile.push("house");
+  profile.push("resume");
+  return [...base, ...profile];
 }
 
 /**

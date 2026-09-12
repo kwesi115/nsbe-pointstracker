@@ -36,7 +36,10 @@ describe("prisma/seed.ts — idempotency", () => {
     const after = await counts();
 
     expect(after).toEqual(before);
-    expect(after[0]).toBe(10); // the ten seeded categories (incl. E-Board Meeting/Retreat), and no more — scoped to the seeded org, since other tests may create their own orgs concurrently
+    // The eleven seeded categories (the nine chapter ones including House Event,
+    // plus E-Board Meeting and Retreat), and no more — scoped to the seeded org,
+    // since other tests may create their own orgs concurrently.
+    expect(after[0]).toBe(11);
   }, 30_000);
 });
 

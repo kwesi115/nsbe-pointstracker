@@ -75,13 +75,10 @@ enum AwardKind {
 }
 
 enum ShirtSize {
-  XS
   S
   M
   L
   XL
-  XXL
-  XXXL
 }
 
 // A narrow, revocable capability grant to one member — the escape valve for

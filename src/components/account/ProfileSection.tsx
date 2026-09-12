@@ -133,7 +133,17 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
               <Field label="First name">{(id) => <input id={id} value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputClass} />}</Field>
               <Field label="Last name">{(id) => <input id={id} value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />}</Field>
             </div>
-            <Field label="Student ID">{(id) => <input id={id} value={studentId} onChange={(e) => setStudentId(e.target.value)} className={inputClass} />}</Field>
+            <Field label="Student ID" help={coreField("studentId").helpText}>
+              {(id) => (
+                <input
+                  id={id}
+                  value={studentId}
+                  onChange={(e) => setStudentId(e.target.value)}
+                  placeholder={coreField("studentId").placeholder}
+                  className={inputClass}
+                />
+              )}
+            </Field>
             <Field label="Phone" required>
               {(id) => <input id={id} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />}
             </Field>

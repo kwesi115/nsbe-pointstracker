@@ -11,7 +11,8 @@ import {
 } from "@/app/(public)/join/actions";
 import Button from "@/components/ui/Button";
 import Field, { inputClass, selectClass } from "@/components/ui/Field";
-import { CLASSIFICATION_OPTIONS, OTHER_MAJOR } from "@/lib/core-form";
+import { CLASSIFICATION_OPTIONS, OTHER_MAJOR, coreField } from "@/lib/core-form";
+import { formatClassification } from "@/lib/format";
 import type { House } from "@/lib/houses";
 import type { Classification, Role } from "@/lib/types";
 import { stepsFor } from "./joinWizardRules";
@@ -455,9 +456,16 @@ function AccountStep({
             )}
           </Field>
         </div>
-        <Field label="Student ID" required error={errors.studentId}>
+        <Field label="Student ID" required error={errors.studentId} help={coreField("studentId").helpText}>
           {(id) => (
-            <input id={id} name="studentId" value={studentId} onChange={(e) => setStudentId(e.target.value)} className={inputClass} />
+            <input
+              id={id}
+              name="studentId"
+              value={studentId}
+              onChange={(e) => setStudentId(e.target.value)}
+              placeholder={coreField("studentId").placeholder}
+              className={inputClass}
+            />
           )}
         </Field>
         <Field label="Classification" required error={errors.classification}>
@@ -542,7 +550,8 @@ function AboutYouStep({
   return (
     <StepCard title="About you" onBack={onBack}>
       <p className="text-sm text-muted">
-        {draft.firstName} {draft.lastName} · {draft.studentId} · {draft.classification} · {draft.major === OTHER_MAJOR ? draft.majorOther : draft.major}
+        {draft.firstName} {draft.lastName} · {draft.studentId} · {formatClassification(draft.classification)} ·{" "}
+        {draft.major === OTHER_MAJOR ? draft.majorOther : draft.major}
       </p>
       <p className="text-xs font-medium text-signal">
         Account created: {draft.resolvedRole ? ACCOUNT_TYPE_LABEL[draft.resolvedRole] : "General member"}

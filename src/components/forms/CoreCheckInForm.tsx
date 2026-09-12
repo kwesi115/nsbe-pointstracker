@@ -244,7 +244,7 @@ export default function CoreCheckInForm({
       ) : null}
 
       {studentIdLive ? (
-        <Field label={coreField("studentId").label} required error={errors.studentId}>
+        <Field label={coreField("studentId").label} required error={errors.studentId} help={coreField("studentId").helpText}>
           {(id, describedBy) => (
             <input
               id={id}

@@ -130,10 +130,16 @@ interface CategorySeed {
 
 // Replaces the old flat PointSystem. Point values are data, never hardcoded
 // anywhere else — see lib/points.ts memberPointsFor/eboardAwardFor, which
-// only ever read these fields fresh at call time. EBOARD_MEETING/
-// EBOARD_RETREAT score 0 member points; they're scored on the separate
-// internal track instead (eboardEligible), and default to EBOARD_ONLY
-// audience (see EventForm.tsx's per-category default, still overridable).
+// only ever read these fields fresh at call time.
+//
+// EBOARD_MEETING/EBOARD_RETREAT carry memberPoints 1 and default to an
+// EBOARD_ONLY audience (see EventForm.tsx's per-category default, still
+// overridable). That value is never what an officer scores: memberPointsFor
+// returns 0 for any role that isn't "general", so for an E-Board member it is
+// never read, and their internal-board points come from eboardAwardFor — a flat
+// Config.EBOARD_POINT_VALUE per eboardEligible activity. Two mechanisms, two
+// boards, no double-count. The value matters only if such an event is ever
+// opened to ALL and a General member attends.
 const CATEGORIES: CategorySeed[] = [
   { code: "GBM", name: "General Body Meeting", shortName: "GBM", tier: 1, memberPoints: 3, examples: "General Body Meetings" },
   {
@@ -170,13 +176,22 @@ const CATEGORIES: CategorySeed[] = [
     memberPoints: 1,
     examples: "Mixers/Socials, Fundraisers, Other General Chapter Events",
   },
+  {
+    code: "HOUSE_EVENT",
+    name: "House Event",
+    shortName: "House",
+    tier: 3,
+    memberPoints: 1,
+    countsForMonthly: true,
+    examples: "House competitions, House socials, inter-House events",
+  },
   { code: "NSBE_WEEK", name: "NSBE Week", shortName: "NSBE Week", tier: null, memberPoints: 2, countsForMonthly: true },
   {
     code: "EBOARD_MEETING",
     name: "E-Board Meeting",
     shortName: "E-Board Mtg",
     tier: null,
-    memberPoints: 0,
+    memberPoints: 1,
     eboardEligible: true,
     audience: Audience.EBOARD_ONLY,
   },
@@ -185,7 +200,7 @@ const CATEGORIES: CategorySeed[] = [
     name: "Retreat",
     shortName: "Retreat",
     tier: null,
-    memberPoints: 0,
+    memberPoints: 1,
     eboardEligible: true,
     audience: Audience.EBOARD_ONLY,
   },

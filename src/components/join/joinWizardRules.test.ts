@@ -60,7 +60,7 @@ describe("validateHouseStep — EBOARD selects a House with no upload", () => {
   });
 });
 
-describe("stepsFor — General needs no code step; only ADMIN skips any profile step", () => {
+describe("stepsFor — General needs no code step; EBOARD skips House; ADMIN skips every profile step", () => {
   const GENERAL_STEPS = stepsFor("general", "general");
   const EBOARD_STEPS = stepsFor("eboard", "eboard");
   const ADMIN_STEPS = stepsFor("admin", "admin");
@@ -82,26 +82,48 @@ describe("stepsFor — General needs no code step; only ADMIN skips any profile 
     expect(stepsFor("admin", null)).toContain("code");
   });
 
-  it("an EBOARD signup renders every step a GENERAL signup renders — the join code step is the ONLY difference", () => {
-    expect(EBOARD_STEPS).toEqual(["type", "code", ...GENERAL_STEPS.slice(1)]);
+  it("an EBOARD signup differs from a GENERAL one by exactly two steps: it gains the code step and loses House", () => {
+    expect(EBOARD_STEPS).toEqual(["type", "code", "account", "about", "contact", "membership", "resume"]);
     expect(EBOARD_STEPS).toContain("code");
     expect(GENERAL_STEPS).not.toContain("code");
+    // Every General step except House, in the same order.
+    expect(EBOARD_STEPS.filter((s) => s !== "code")).toEqual(GENERAL_STEPS.filter((s) => s !== "house"));
   });
 
-  it("an EBOARD signup cannot skip About you, Contact, Membership, House, or Resume", () => {
-    for (const step of ["about", "contact", "membership", "house", "resume"] as const) {
+  it("an EBOARD signup never shows the House step", () => {
+    expect(EBOARD_STEPS).not.toContain("house");
+  });
+
+  it("an EBOARD signup still cannot skip About you, Contact, Membership, or Resume", () => {
+    for (const step of ["about", "contact", "membership", "resume"] as const) {
       expect(EBOARD_STEPS).toContain(step);
     }
   });
 
-  it("the House step is mandatory for EBOARD — a House or the skip, but not neither", () => {
-    expect(EBOARD_STEPS).toContain("house");
-    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined }, "eboard")).toBeTruthy();
-    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined }, "eboard")).toBeNull();
-    // ...and a House alone gets them through, with no upload.
+  it("a GENERAL signup still requires House, with a House or the explicit skip — and no screenshot escape", () => {
+    expect(GENERAL_STEPS).toContain("house");
+    // Neither answer given: refused.
+    expect(validateHouseStep({ houseSkipped: false, house: "", houseProofFileId: undefined }, "general")).toBeTruthy();
+    // The explicit "haven't taken it yet" is a complete answer.
+    expect(validateHouseStep({ houseSkipped: true, house: "", houseProofFileId: undefined }, "general")).toBeNull();
+    // A House WITHOUT the screenshot is not enough for a General member.
     expect(
-      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "eboard"),
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "general"),
+    ).toBeTruthy();
+    // House plus screenshot gets them through.
+    expect(
+      validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: "file_1" }, "general"),
     ).toBeNull();
+  });
+
+  /**
+   * validateHouseStep still answers for "eboard" because /account keeps House as
+   * an optional field for an officer who wants it on record (and
+   * houseSelfVerifies means no screenshot is asked of them there). It is simply
+   * no longer reachable from the signup wizard.
+   */
+  it("the eboard House rule survives for /account, where the field is still offered", () => {
+    expect(validateHouseStep({ houseSkipped: false, house: "House Turing", houseProofFileId: undefined }, "eboard")).toBeNull();
   });
 
   it("an ADMIN signup skips about-you, contact, membership, House, and resume", () => {
@@ -111,10 +133,12 @@ describe("stepsFor — General needs no code step; only ADMIN skips any profile 
     }
   });
 
-  it("a downgrade — picked EBOARD/ADMIN but the code only granted GENERAL — falls through to the full General step list", () => {
+  it("a downgrade — picked EBOARD/ADMIN but the code only granted GENERAL — falls through to the full General step list, House included", () => {
     for (const picked of ["eboard", "admin"] as const) {
       const steps = stepsFor(picked, "general");
       expect(steps).toEqual(["type", "code", ...GENERAL_STEPS.slice(1)]);
+      // The RESOLVED role decides, so a downgraded signup does answer House.
+      expect(steps).toContain("house");
     }
   });
 

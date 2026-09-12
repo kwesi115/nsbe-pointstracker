@@ -69,7 +69,7 @@ export const OTHER_MAJOR = "Other";
  * this order, and "23 M, 31 L, 18 XL" is only readable if the sizes come out
  * in size order rather than alphabetically or by count.
  */
-export const SHIRT_SIZE_OPTIONS: ShirtSize[] = ["XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+export const SHIRT_SIZE_OPTIONS: ShirtSize[] = ["S", "M", "L", "XL"];
 
 export type CoreFieldKind = "short_text" | "email" | "dropdown" | "yes_no" | "file_upload" | "choice";
 
@@ -84,6 +84,8 @@ export interface CoreFormField {
   prefillFrom?: keyof Member;
   readOnly?: boolean;
   helpText?: string;
+  /** Shown in the empty input. Illustrates the expected shape; never validated against. */
+  placeholder?: string;
 }
 
 /**
@@ -104,7 +106,21 @@ export const CORE_FORM_FIELDS: CoreFormField[] = [
     readOnly: true,
     helpText: "Your account already proves this address.",
   },
-  { id: "studentId", label: "Student ID", section: "info", kind: "short_text", required: true, prefillFrom: "studentId" },
+  {
+    id: "studentId",
+    label: "Student ID",
+    section: "info",
+    kind: "short_text",
+    required: true,
+    prefillFrom: "studentId",
+    // Guidance, deliberately NOT a rule: buildCoreFormSchema below validates
+    // studentId as a non-empty string and nothing more. A hard "starts with 00"
+    // check would lock out anyone whose ID legitimately differs — a transfer,
+    // an exchange student, an older record — and a member who cannot check in is
+    // a worse outcome than a mistyped digit an admin can fix.
+    helpText: "Starts with 00",
+    placeholder: "00XXXXXX",
+  },
   { id: "phone", label: "Phone", section: "info", kind: "short_text", required: true, prefillFrom: "phone" },
   {
     id: "personalEmail",
@@ -310,9 +326,10 @@ export interface GetMissingFieldsConfig {
  *
  *   WHO YOU ARE          ADMIN accounts are a staff login, not a member
  *                        profile — they never signed up for one (see
- *                        joinWizardRules.ts stepsFor) and are never nagged
- *                        to complete one. EBOARD is NOT included: an
- *                        officer is prompted exactly like a GENERAL member.
+ *                        lib/signup.ts stepsFor) and are never nagged to
+ *                        complete one. EBOARD still answers everything a
+ *                        GENERAL member does EXCEPT House, which their signup
+ *                        skips entirely, so nothing here may ask for it.
  *
  *   WHAT EVENT YOU'RE AT EBOARD_ONLY events only ever ask for
  *                        genuinely-missing name fields — officers
@@ -356,7 +373,13 @@ export function getMissingFields(
   if (user.duesPaidReported !== true || user.membershipSeason !== config.SEASON) missing.push("duesPaid");
   if (user.nationalMemberReported !== true || user.membershipSeason !== config.SEASON) missing.push("nationalMember");
 
-  if (user.houseVerifiedAt === null && !user.house) missing.push("house");
+  // House is a GENERAL-member question only. An E-Board account no longer
+  // answers it at signup (see lib/signup.ts stepsFor), so asking for it at
+  // check-in would re-open a question their signup deliberately skipped — and
+  // there would be no way to answer it, since the House step no longer exists
+  // in their flow. It stays available as an optional field on /account for an
+  // officer who wants their House on record.
+  if (user.role === "general" && user.houseVerifiedAt === null && !user.house) missing.push("house");
 
   if (user.resumeFileId === null) missing.push("resume");
 

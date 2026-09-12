@@ -33,7 +33,7 @@ export type Denial =
 /** An org-wide on/off switch stored in Config and toggled from /admin/settings — see lib/features.ts. */
 export type FeatureName = "exports";
 
-export type ShirtSize = "XS" | "S" | "M" | "L" | "XL" | "XXL" | "XXXL";
+export type ShirtSize = "S" | "M" | "L" | "XL";
 
 /** EBOARD_ONLY events never appear in the member feed or member leaderboard — see lib/points.ts eboardAwardFor. */
 export type Audience = "all" | "eboard_only";

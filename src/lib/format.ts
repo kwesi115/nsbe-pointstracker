@@ -6,6 +6,8 @@
 
 import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
+import { CLASSIFICATION_OPTIONS } from "./core-form";
+import type { Classification } from "./types";
 
 const TIME_ZONE = "America/New_York";
 
@@ -46,4 +48,22 @@ export function pluralize(n: number, singular: string, plural = `${singular}s`):
 export function memberDisplayName(firstName: string, lastName: string, email: string): string {
   const full = `${firstName} ${lastName}`.trim();
   return full || email.split("@")[0];
+}
+
+/**
+ * A Classification for display: "junior" -> "Junior", "graduate" -> "Graduate
+ * Student".
+ *
+ * THE ONE formatter for this value. The stored enum is lowercase (see
+ * prisma/schema.prisma Classification) and several surfaces used to render it
+ * raw, so the roster showed "junior" while the dropdown that set it showed
+ * "Junior". Labels come from lib/core-form.ts CLASSIFICATION_OPTIONS — the same
+ * array every picker renders — so a label can never drift between the control
+ * that writes a value and the table that reads it back.
+ *
+ * Display layer only: nothing here rewrites what is stored.
+ */
+export function formatClassification(value: Classification | "" | null | undefined): string {
+  if (!value) return "";
+  return CLASSIFICATION_OPTIONS.find((o) => o.value === value)?.label ?? value;
 }

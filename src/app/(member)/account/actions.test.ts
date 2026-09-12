@@ -34,6 +34,7 @@ import { updateProfileFields } from "@/lib/repo";
 import { requireAdmin, requireSession } from "@/lib/session";
 import { updateProfileAction } from "./actions";
 import { adminUpdateProfileAction } from "../admin/members/actions";
+import { SHIRT_SIZE_OPTIONS } from "@/lib/core-form";
 
 const updateProfileFieldsMock = updateProfileFields as unknown as ReturnType<typeof vi.fn>;
 const requireSessionMock = requireSession as unknown as ReturnType<typeof vi.fn>;
@@ -72,8 +73,10 @@ describe("a member changing their own t-shirt size", () => {
     );
   });
 
-  it("can move between any two of the seven sizes", async () => {
-    for (const size of ["XS", "S", "M", "L", "XL", "XXL", "XXXL"] as const) {
+  it("can move between any two of the offered sizes", async () => {
+    // The full set, which narrowed to S-XL — see lib/core-form.ts
+    // SHIRT_SIZE_OPTIONS and the migration that removed XS/XXL/XXXL.
+    for (const size of SHIRT_SIZE_OPTIONS) {
       updateProfileFieldsMock.mockClear();
       await updateProfileAction({ ...BASE, tshirtSize: size });
       expect(updateProfileFieldsMock.mock.calls[0][2]).toMatchObject({ tshirtSize: size });
@@ -95,13 +98,13 @@ describe("a member changing their own t-shirt size", () => {
 
 describe("an admin changing a member's t-shirt size", () => {
   it("saves it against the member, attributed to the admin", async () => {
-    const result = await adminUpdateProfileAction("ada@bison.howard.edu", { ...BASE, tshirtSize: "XXL" });
+    const result = await adminUpdateProfileAction("ada@bison.howard.edu", { ...BASE, tshirtSize: "XL" });
 
     expect(result.error).toBeNull();
     expect(updateProfileFieldsMock).toHaveBeenCalledWith(
       "org-1",
       "ada@bison.howard.edu",
-      expect.objectContaining({ tshirtSize: "XXL" }),
+      expect.objectContaining({ tshirtSize: "XL" }),
       // The actor is the admin, not the member — that is what makes the
       // resulting AdminLog row meaningful.
       "admin@bison.howard.edu",

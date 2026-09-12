@@ -3,10 +3,12 @@ import { DEFAULT_HOUSES, codeFromName, parseHouses, serializeHouses } from "./ho
 
 describe("DEFAULT_HOUSES", () => {
   it("is exactly the four real NSBE Houses, with their colors", () => {
+    // Dean is yellow and Latimer green — these two were the other way round. See
+    // house-colors.test.ts for the swap and the fallback paths it reaches.
     expect(DEFAULT_HOUSES).toEqual([
       { code: "JEMISON", name: "Jemison", color: "#C8102E" },
-      { code: "LATIMER", name: "Latimer", color: "#F2A900" },
-      { code: "DEAN", name: "Dean", color: "#00843D" },
+      { code: "LATIMER", name: "Latimer", color: "#00843D" },
+      { code: "DEAN", name: "Dean", color: "#F2A900" },
       { code: "JOHNSON", name: "Johnson", color: "#1A1A1A" },
     ]);
   });

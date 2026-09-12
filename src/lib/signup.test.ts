@@ -126,7 +126,7 @@ describe("the resume point is derived from the data, never from a stored positio
 });
 
 describe("progress is the real position in the wizard, not the position in what's left", () => {
-  it("an E-Board member sees 8 steps, because their signup used a join code", () => {
+  it("an E-Board member sees 7 steps: the join code adds one, and House is not asked of them", () => {
     expect(signupStepsFor("eboard")).toEqual([
       "type",
       "code",
@@ -134,11 +134,9 @@ describe("progress is the real position in the wizard, not the position in what'
       "about",
       "contact",
       "membership",
-      "house",
       "resume",
     ]);
-    // The brief's own example.
-    expect(signupStepPosition("eboard", "contact")).toEqual({ position: 5, total: 8 });
+    expect(signupStepPosition("eboard", "contact")).toEqual({ position: 5, total: 7 });
   });
 
   it("a General member sees 7, because a codeless signup skips the code step", () => {
@@ -220,10 +218,17 @@ describe("the House step: selecting a House and declining the test are both comp
 });
 
 describe("role differences", () => {
-  it("an EBOARD member answers exactly what a GENERAL member answers", () => {
+  it("an EBOARD member answers what a GENERAL member answers, minus House", () => {
     const general = member({ ...JUST_CREATED, role: "general" });
     const officer = member({ ...JUST_CREATED, role: "eboard" });
-    expect(missingSignupSteps(officer)).toEqual(missingSignupSteps(general));
+    expect(missingSignupSteps(general)).toEqual(["contact", "membership", "house"]);
+    expect(missingSignupSteps(officer)).toEqual(["contact", "membership"]);
+  });
+
+  it("an EBOARD member with no House is still complete — the question is not theirs to answer", () => {
+    const officer = member({ role: "eboard", house: "", houseVerifiedAt: null });
+    expect(requiredSignupFieldsComplete(officer)).toBe(true);
+    expect(missingSignupSteps(officer)).toEqual([]);
   });
 
   it("an ADMIN account is complete as soon as it exists — no profile step can gate it", () => {

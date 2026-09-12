@@ -2,7 +2,7 @@ import { CLAIM_STATE_LABEL } from "@/lib/claim-state";
 import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { toCsv } from "@/lib/csv";
-import { formatDateTime } from "@/lib/format";
+import { formatClassification, formatDateTime } from "@/lib/format";
 import {
   DEFAULT_LEADERBOARD_DISCLAIMER,
   getConfigValue,
@@ -109,7 +109,7 @@ export async function buildMembersCsv(orgId: string, emails: string[]): Promise<
     m.firstName,
     m.lastName,
     m.email,
-    m.classification,
+    formatClassification(m.classification),
     m.major,
     // The four states, not "reported / not reported" — an export that can't
     // tell a self-report from a verified claim is the same bug the roster

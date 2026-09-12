@@ -14,10 +14,10 @@ export interface House {
 }
 
 export const DEFAULT_HOUSES: House[] = [
-  { code: "JEMISON", name: "Jemison", color: "#C8102E" },
-  { code: "LATIMER", name: "Latimer", color: "#F2A900" },
-  { code: "DEAN", name: "Dean", color: "#00843D" },
-  { code: "JOHNSON", name: "Johnson", color: "#1A1A1A" },
+  { code: "JEMISON", name: "Jemison", color: "#C8102E" }, // red
+  { code: "LATIMER", name: "Latimer", color: "#00843D" }, // green
+  { code: "DEAN", name: "Dean", color: "#F2A900" }, // yellow
+  { code: "JOHNSON", name: "Johnson", color: "#1A1A1A" }, // black
 ];
 
 function isHouse(v: unknown): v is House {

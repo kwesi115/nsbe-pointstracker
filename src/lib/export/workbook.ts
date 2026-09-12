@@ -7,7 +7,7 @@
  */
 
 import ExcelJS from "exceljs";
-import { formatDateTime } from "@/lib/format";
+import { formatClassification, formatDateTime } from "@/lib/format";
 import {
   DEFAULT_LEADERBOARD_DISCLAIMER,
   getAdminLog,
@@ -48,7 +48,7 @@ export async function buildWorkbookExport(orgId: string): Promise<Buffer> {
       m.firstName,
       m.lastName,
       m.studentId,
-      m.classification,
+      formatClassification(m.classification),
       m.major,
       m.membership,
       m.house,

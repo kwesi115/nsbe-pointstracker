@@ -542,9 +542,15 @@ export function AboutFormStep({
           )}
         </Field>
       </div>
-      <Field label="Student ID" required>
+      <Field label="Student ID" required help={coreField("studentId").helpText}>
         {(id) => (
-          <input id={id} value={draft.studentId} onChange={(e) => onPatch({ studentId: e.target.value })} className={inputClass} />
+          <input
+            id={id}
+            value={draft.studentId}
+            onChange={(e) => onPatch({ studentId: e.target.value })}
+            placeholder={coreField("studentId").placeholder}
+            className={inputClass}
+          />
         )}
       </Field>
       <Field label="Classification" required>
