@@ -21,11 +21,11 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-24 text-center">
       <div>
         <p className="text-sm text-muted">{org?.name ?? chapterName}</p>
-        <h1 className="font-display text-2xl font-bold text-ink">Points Tracker</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Points Tracker</h1>
       </div>
 
       {params.message ? (
-        <p role="status" className="max-w-xs text-sm font-medium text-signal">
+        <p role="status" className="max-w-xs text-sm font-medium text-signal-strong">
           {params.message}
         </p>
       ) : null}
@@ -34,7 +34,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
 
       <p className="max-w-xs text-sm text-muted">
         New member?{" "}
-        <a href="/join" className="font-semibold text-signal underline underline-offset-2">
+        <a href="/join" className="font-semibold text-signal-strong underline underline-offset-2">
           Create an account
         </a>
         .

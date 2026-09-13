@@ -7,10 +7,10 @@ const BASE =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 
 const VARIANT: Record<ButtonVariant, string> = {
-  primary: "bg-signal text-white hover:bg-[#2549c4] active:bg-[#1e3da3]",
-  secondary: "bg-white text-ink border border-line hover:bg-surface-sunken",
-  danger: "bg-alert text-white hover:bg-[#b91d42]",
-  ghost: "text-ink hover:bg-surface-sunken",
+  primary: "bg-signal text-on-signal hover:bg-signal-hover active:bg-signal-active",
+  secondary: "bg-surface text-foreground border border-border hover:bg-surface-raised",
+  danger: "bg-alert text-on-alert hover:bg-alert-hover",
+  ghost: "text-foreground hover:bg-surface-raised",
 };
 
 interface CommonProps {

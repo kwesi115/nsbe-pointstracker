@@ -22,7 +22,7 @@ export default async function GuestEventPage({ params }: { params: Promise<{ id:
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 px-4 py-4 md:gap-6 md:px-6 md:py-10">
       <div>
-        <h1 className="font-display text-xl font-bold text-ink md:text-2xl">{event.name}</h1>
+        <h1 className="font-display text-xl font-bold text-foreground md:text-2xl">{event.name}</h1>
         <p className="text-sm text-muted">
           {event.category.name} · {formatDate(event.date)} · {event.location || "Location TBD"}
         </p>

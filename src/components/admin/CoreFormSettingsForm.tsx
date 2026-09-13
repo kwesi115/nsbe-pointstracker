@@ -54,7 +54,7 @@ export default function CoreFormSettingsForm({
       </Field>
 
       <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium text-ink">NSBE Houses</p>
+        <p className="text-sm font-medium text-foreground">NSBE Houses</p>
         <p className="text-xs text-muted">
           Name and color for each House — the color renders as a dot beside the name everywhere a House appears.
         </p>
@@ -65,7 +65,7 @@ export default function CoreFormSettingsForm({
                 type="color"
                 value={h.color}
                 onChange={(e) => updateHouse(i, { color: e.target.value })}
-                className="h-9 w-9 shrink-0 rounded border border-line"
+                className="h-9 w-9 shrink-0 rounded border border-border"
                 aria-label={`Color for ${h.name || "this House"}`}
               />
               <input
@@ -90,7 +90,7 @@ export default function CoreFormSettingsForm({
         <input type="hidden" name="housesJson" value={JSON.stringify(houses)} />
       </div>
 
-      <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+      <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
         <input type="checkbox" name="showPendingPoints" defaultChecked={showPendingPoints} className="h-4 w-4" />
         Show a member&apos;s pending point total while ineligible
       </label>

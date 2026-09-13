@@ -96,7 +96,7 @@ export default async function AdminMembersPage({ searchParams }: { searchParams:
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
       <div>
-        <h1 className="font-display text-2xl font-bold text-ink">Member Directory</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Member Directory</h1>
         <p className="numeric text-sm text-muted">
           {aggregates.total} matching · {aggregates.eligible} eligible
         </p>

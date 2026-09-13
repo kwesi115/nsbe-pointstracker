@@ -14,7 +14,7 @@ export default async function GuestEventsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10">
-      <h1 className="font-display text-2xl font-bold text-ink">Open events</h1>
+      <h1 className="font-display text-2xl font-bold text-foreground">Open events</h1>
 
       {events.length === 0 ? (
         <EmptyState icon={CalendarClock} title="No events are open right now." />
@@ -28,7 +28,7 @@ export default async function GuestEventsPage() {
             >
               <Card className="flex items-start justify-between gap-3 transition-colors hover:border-signal">
                 <div>
-                  <h2 className="font-display text-lg font-bold text-ink">{event.name}</h2>
+                  <h2 className="font-display text-lg font-bold text-foreground">{event.name}</h2>
                   <p className="text-sm text-muted">
                     {event.category.name} · {event.location || "Location TBD"}
                   </p>
@@ -37,7 +37,7 @@ export default async function GuestEventsPage() {
                   <Badge tone="signal">Open</Badge>
                   {event.closesAt ? (
                     <p className="mt-1 text-xs text-muted">
-                      Closes in <Countdown to={event.closesAt} className="font-semibold text-ink" />
+                      Closes in <Countdown to={event.closesAt} className="font-semibold text-foreground" />
                     </p>
                   ) : null}
                 </div>

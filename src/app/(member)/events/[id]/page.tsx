@@ -39,10 +39,10 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 px-4 py-4 md:gap-6 md:px-6 md:py-10">
       <div>
-        <Link href="/events" className="text-sm text-muted hover:text-ink">
+        <Link href="/events" className="text-sm text-muted hover:text-foreground">
           ← Events
         </Link>
-        <h1 className="mt-1 font-display text-xl font-bold text-ink md:text-2xl">{event.name}</h1>
+        <h1 className="mt-1 font-display text-xl font-bold text-foreground md:text-2xl">{event.name}</h1>
         <p className="text-sm text-muted">
           {event.category.shortName} · +{event.points ?? event.category.memberPoints} · {formatDate(event.date)} ·{" "}
           {event.location || "Location TBD"}
@@ -60,7 +60,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
           {event.closesAt ? (
             <p className="flex items-center gap-1.5 text-sm text-muted">
               <Clock size={16} aria-hidden="true" />
-              Closes in <Countdown to={event.closesAt} className="font-semibold text-ink" />
+              Closes in <Countdown to={event.closesAt} className="font-semibold text-foreground" />
             </p>
           ) : null}
           <CheckInFlow

@@ -107,7 +107,7 @@ async function seedOrg(): Promise<string> {
     create: {
       id: ORG_ID,
       slug: ORG_SLUG,
-      name: "Howard University NSBE",
+      name: "Howard NSBE",
       shortName: "Howard NSBE",
       active: true,
     },
@@ -234,7 +234,7 @@ async function seedCategories(orgId: string): Promise<Map<string, string>> {
 async function seedConfig(orgId: string) {
   const config: Record<string, string> = {
     SEASON,
-    CHAPTER_NAME: "Howard University Chapter",
+    CHAPTER_NAME: "Howard NSBE",
     ALLOWED_EMAIL_DOMAIN: "bison.howard.edu",
     // Login-only exemption for the seven hardcoded officer accounts below
     // (see lib/repo.ts isLoginEmailAllowed) — never touched again after first

@@ -9,7 +9,7 @@ const INITIAL_STATE: MemberActionState = { error: null };
 // Approving is idempotent (the member ends up ACTIVE either way), but both
 // buttons still dispatch through a form submit so `pending` is real and a
 // double-click can't send Approve and Reject's own request racing behind it.
-const SMALL_BUTTON = "min-h-8 rounded border border-line px-2 text-xs font-semibold disabled:opacity-50";
+const SMALL_BUTTON = "min-h-8 rounded border border-border px-2 text-xs font-semibold disabled:opacity-50";
 
 export default function ApproveRejectButtons({ email }: { email: string }) {
   const { show } = useToast();
@@ -22,7 +22,7 @@ export default function ApproveRejectButtons({ email }: { email: string }) {
         payload={{ email }}
         label="Approve"
         variant="ghost"
-        className={`${SMALL_BUTTON} text-signal hover:bg-signal/10`}
+        className={`${SMALL_BUTTON} text-signal-strong hover:bg-signal/10`}
         onSuccess={() => show(`${email} approved`)}
         onError={(message) => show(message, "error")}
       />

@@ -37,7 +37,7 @@ function CategoryFields({ category, exportsEnabled }: { category?: EventCategory
         </Field>
       </div>
       {category ? (
-        <p className="rounded-lg bg-amber/10 px-3 py-2 text-xs text-ink">
+        <p className="rounded-lg bg-torch/10 px-3 py-2 text-xs text-foreground">
           Points are derived, not stored — changing "Member points" here changes every past registration in this
           category&apos;s contribution to the leaderboard immediately, with no backfill.
           {exportsEnabled ? (
@@ -45,7 +45,7 @@ function CategoryFields({ category, exportsEnabled }: { category?: EventCategory
               {" "}
               <a
                 href="/api/admin/export/leaderboard/csv"
-                className="font-semibold text-signal underline underline-offset-2"
+                className="font-semibold text-signal-strong underline underline-offset-2"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -73,15 +73,15 @@ function CategoryFields({ category, exportsEnabled }: { category?: EventCategory
         </Field>
       </div>
       <div className="flex flex-wrap gap-4">
-        <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+        <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
           <input type="checkbox" name="countsForMonthly" defaultChecked={category?.countsForMonthly ?? true} className="h-4 w-4" />
           Counts toward Monthly Engagement Champion
         </label>
-        <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+        <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
           <input type="checkbox" name="eboardEligible" defaultChecked={category?.eboardEligible ?? true} className="h-4 w-4" />
           Contributes to the internal E-Board track
         </label>
-        <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+        <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
           <input type="checkbox" name="active" defaultChecked={category?.active ?? true} className="h-4 w-4" />
           Active
         </label>
@@ -103,7 +103,7 @@ function EditCategoryForm({
   const [state, formAction, pending] = useActionState(boundAction, INITIAL_STATE);
 
   return (
-    <form action={formAction} className="flex flex-col gap-4 border-t border-line pt-4">
+    <form action={formAction} className="flex flex-col gap-4 border-t border-border pt-4">
       <CategoryFields category={category} exportsEnabled={exportsEnabled} />
       {state.error ? <p className="text-sm font-medium text-alert">{state.error}</p> : null}
       <div className="flex gap-2">
@@ -164,7 +164,7 @@ export default function CategoriesManager({
           <tbody>
             {categories.map((c) => (
               <Fragment key={c.id}>
-                <tr className="border-b border-line last:border-0">
+                <tr className="border-b border-border last:border-0">
                   <td className={tdClass}>{c.code}</td>
                   <td className={tdClass}>
                     {c.name}
@@ -179,7 +179,7 @@ export default function CategoriesManager({
                     <button
                       type="button"
                       onClick={() => setEditingId(editingId === c.id ? null : c.id)}
-                      className="text-xs font-semibold text-signal underline underline-offset-2"
+                      className="text-xs font-semibold text-signal-strong underline underline-offset-2"
                     >
                       {editingId === c.id ? "Close" : "Edit"}
                     </button>
@@ -187,7 +187,7 @@ export default function CategoriesManager({
                 </tr>
                 {editingId === c.id ? (
                   <tr>
-                    <td colSpan={8} className="bg-surface-sunken px-4 py-4">
+                    <td colSpan={8} className="bg-surface-raised px-4 py-4">
                       <EditCategoryForm category={c} onDone={() => setEditingId(null)} exportsEnabled={exportsEnabled} />
                     </td>
                   </tr>

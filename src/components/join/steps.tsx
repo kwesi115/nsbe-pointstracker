@@ -78,7 +78,7 @@ export function ProgressIndicator({ steps, currentIndex }: { steps: StepKey[]; c
         {steps.map((s, i) => (
           <div
             key={s}
-            className={`h-1.5 flex-1 rounded-full ${i <= currentIndex ? "bg-signal" : "bg-line"}`}
+            className={`h-1.5 flex-1 rounded-full ${i <= currentIndex ? "bg-signal" : "bg-border"}`}
             aria-hidden="true"
           />
         ))}
@@ -100,11 +100,11 @@ export function StepCard({
   onBack?: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-5 rounded-xl border border-line bg-surface p-6">
-      <h2 className="font-display text-lg font-bold text-ink">{title}</h2>
+    <div className="flex flex-col gap-5 rounded-xl border border-border bg-surface p-6">
+      <h2 className="font-display text-lg font-bold text-foreground">{title}</h2>
       {children}
       {onBack ? (
-        <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-muted hover:text-ink">
+        <button type="button" onClick={onBack} className="self-start text-sm font-semibold text-muted hover:text-foreground">
           ← Back
         </button>
       ) : null}
@@ -124,7 +124,7 @@ export function StepError({ message, sessionExpired }: { message: string; sessio
     <div role="alert" className="flex flex-col gap-2 text-sm font-medium text-alert">
       <p>{message}</p>
       {sessionExpired ? (
-        <a href="/signin?callbackUrl=%2Fjoin" className="self-start font-semibold text-signal underline underline-offset-2">
+        <a href="/signin?callbackUrl=%2Fjoin" className="self-start font-semibold text-signal-strong underline underline-offset-2">
           Sign in again
         </a>
       ) : null}

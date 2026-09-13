@@ -15,7 +15,7 @@ export default function Forbidden() {
         title="You don't have access to this"
         description="That page is restricted. If you think this is wrong, check with E-Board."
         action={
-          <Link href="/dashboard" className="text-sm font-semibold text-signal underline underline-offset-2">
+          <Link href="/dashboard" className="text-sm font-semibold text-signal-strong underline underline-offset-2">
             Go to dashboard
           </Link>
         }

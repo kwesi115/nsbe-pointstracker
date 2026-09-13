@@ -91,7 +91,7 @@ export default function MemberBottomNav() {
   return (
     <nav
       aria-label="Primary"
-      className="pb-safe-bottom fixed inset-x-0 bottom-0 z-[var(--z-bottom-nav)] flex h-[calc(var(--bottom-nav-height)+env(safe-area-inset-bottom,0px))] border-t border-line bg-surface md:hidden print:hidden"
+      className="pb-safe-bottom fixed inset-x-0 bottom-0 z-[var(--z-bottom-nav)] flex h-[calc(var(--bottom-nav-height)+env(safe-area-inset-bottom,0px))] border-t border-border bg-surface md:hidden print:hidden"
     >
       {TABS.map(({ href, label, icon: Icon }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -101,7 +101,7 @@ export default function MemberBottomNav() {
             href={href}
             aria-current={active ? "page" : undefined}
             className={`flex flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
-              active ? "text-signal" : "text-muted"
+              active ? "text-signal-strong" : "text-muted"
             }`}
           >
             <Icon size={22} aria-hidden="true" />

@@ -16,7 +16,7 @@ export default async function NewEventPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-6 px-6 py-10">
-      <h1 className="font-display text-2xl font-bold text-ink">New event</h1>
+      <h1 className="font-display text-2xl font-bold text-foreground">New event</h1>
       <EventForm
         action={createEventAction}
         categories={categories}

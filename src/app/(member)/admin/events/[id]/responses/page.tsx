@@ -21,7 +21,7 @@ export default async function EventResponsesPage({ params }: { params: Promise<{
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold text-ink">Responses — {event.name}</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">Responses — {event.name}</h1>
           <p className="numeric text-sm text-muted">{responses.length} checked in</p>
         </div>
         <div className="flex items-center gap-2">
@@ -30,7 +30,7 @@ export default async function EventResponsesPage({ params }: { params: Promise<{
           {guard.access.features.exports ? (
             <a
               href={`/api/admin/export/event/${id}/csv`}
-              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
             >
               <Download size={16} aria-hidden="true" /> Export CSV
             </a>

@@ -158,7 +158,7 @@ function FieldInput({
               {field.options.map((opt) => {
                 const checked = selected.includes(opt);
                 return (
-                  <label key={opt} className="flex min-h-11 items-center gap-2 text-sm text-ink">
+                  <label key={opt} className="flex min-h-11 items-center gap-2 text-sm text-foreground">
                     <input
                       type="checkbox"
                       checked={checked}
@@ -184,7 +184,7 @@ function FieldInput({
           {() => (
             <div className="flex gap-4" role="radiogroup" aria-label={label}>
               {(["Yes", "No"] as const).map((opt) => (
-                <label key={opt} className="flex min-h-11 items-center gap-2 text-sm text-ink">
+                <label key={opt} className="flex min-h-11 items-center gap-2 text-sm text-foreground">
                   <input
                     type="radio"
                     name={field.fieldKey}
@@ -215,7 +215,7 @@ function FieldInput({
                   disabled={disabled}
                   onClick={() => onChange(n)}
                   className={`numeric flex min-h-11 min-w-11 items-center justify-center rounded-lg border text-sm font-semibold ${
-                    value === n ? "border-signal bg-signal text-white" : "border-line bg-white text-ink"
+                    value === n ? "border-signal bg-signal text-on-signal" : "border-border bg-surface text-foreground"
                   }`}
                 >
                   {n}

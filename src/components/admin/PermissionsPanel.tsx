@@ -30,10 +30,10 @@ export default function PermissionsPanel({ email, granted }: { email: string; gr
   return (
     <div className="flex flex-col gap-2">
       {permissions.map((p) => (
-        <div key={p} className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4">
+        <div key={p} className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center gap-3">
             <Badge tone={has(p) ? "signal" : "muted"}>{has(p) ? "Granted" : "Not granted"}</Badge>
-            <span className="text-sm text-ink">{LABEL[p]}</span>
+            <span className="text-sm text-foreground">{LABEL[p]}</span>
             {/* Dispatched as a form submit (see ui/ActionButton.tsx), so the
                 button is genuinely disabled while the grant is in flight —
                 clicking twice used to grant and then immediately revoke. */}

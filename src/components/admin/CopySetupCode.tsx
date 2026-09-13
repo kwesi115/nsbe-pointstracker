@@ -12,12 +12,12 @@ export default function CopySetupCode({ email, setupCode }: { email: string; set
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="rounded-lg border border-amber bg-amber/10 p-3 text-sm text-ink">
+    <div className="rounded-lg border border-torch bg-torch/10 p-3 text-sm text-foreground">
       <p>
         Setup code for <strong>{email}</strong> — write it down now, it won&apos;t be shown again:
       </p>
       <div className="mt-2 flex items-center gap-2">
-        <code className="numeric rounded bg-ink/10 px-2 py-1 text-base tracking-widest">{setupCode}</code>
+        <code className="numeric rounded bg-foreground/10 px-2 py-1 text-base tracking-widest">{setupCode}</code>
         <button
           type="button"
           onClick={() => {
@@ -25,7 +25,7 @@ export default function CopySetupCode({ email, setupCode }: { email: string; set
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
           }}
-          className="inline-flex min-h-8 items-center gap-1 rounded border border-line px-2 py-1 text-xs font-medium hover:bg-white"
+          className="inline-flex min-h-8 items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium hover:bg-surface"
         >
           {copied ? <Check size={14} /> : <Copy size={14} />}
           {copied ? "Copied" : "Copy"}

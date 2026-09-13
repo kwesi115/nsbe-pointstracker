@@ -61,13 +61,13 @@ export default function HouseBlock({
       </Button>
 
       {value.houseSkipped ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-sunken px-3 py-2.5 text-sm text-ink">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-raised px-3 py-2.5 text-sm text-foreground">
           <span>No problem — take the test when you get a chance. We&apos;ll ask again at your next event.</span>
           <button
             type="button"
             onClick={() => onChange({ houseSkipped: false })}
             disabled={disabled}
-            className="shrink-0 text-xs font-semibold text-signal underline underline-offset-2"
+            className="shrink-0 text-xs font-semibold text-signal-strong underline underline-offset-2"
           >
             Actually, I have a result
           </button>
@@ -124,7 +124,7 @@ export default function HouseBlock({
             type="button"
             onClick={() => onChange({ houseSkipped: true, house: undefined, houseProofFileId: undefined, houseFilename: undefined })}
             disabled={disabled}
-            className="self-start text-xs font-semibold text-muted underline underline-offset-2 hover:text-ink"
+            className="self-start text-xs font-semibold text-muted underline underline-offset-2 hover:text-foreground"
           >
             I haven&apos;t taken the test yet
           </button>

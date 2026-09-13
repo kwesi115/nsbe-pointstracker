@@ -47,7 +47,7 @@ export default function ClaimStatus({
     const on = verifiedAt ? ` on ${formatDate(verifiedAt)}` : "";
     return (
       <span title={`Verified${by}${on}`} className="inline-flex">
-        <Check size={16} className="text-signal" aria-label={`${claimLabel}: verified${by}${on}`} />
+        <Check size={16} className="text-signal-strong" aria-label={`${claimLabel}: verified${by}${on}`} />
       </span>
     );
   }
@@ -62,7 +62,7 @@ export default function ClaimStatus({
 
   return (
     <span title="Self-reported — not yet verified" className="inline-flex">
-      <Hand size={16} className="text-[#7a4d00]" aria-label={`${claimLabel}: self-reported, not yet verified`} />
+      <Hand size={16} className="text-torch-strong" aria-label={`${claimLabel}: self-reported, not yet verified`} />
     </span>
   );
 }

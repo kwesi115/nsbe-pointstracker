@@ -161,7 +161,7 @@ export default function CoreCheckInForm({
               onEdit={() => edit("firstName", "lastName")}
             />
           ) : null}
-          <div className="flex items-center gap-2 rounded-lg bg-surface-sunken px-3 py-2.5 text-sm text-muted">
+          <div className="flex items-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-sm text-muted">
             <Lock size={14} aria-hidden="true" />
             <span>Bison email: {email}</span>
           </div>
@@ -481,7 +481,7 @@ export default function CoreCheckInForm({
                     { value: "upload", label: "Upload Updated Resume" },
                   ] as const
                 ).map((opt) => (
-                  <label key={opt.value} className="flex min-h-11 items-center gap-2 text-sm text-ink">
+                  <label key={opt.value} className="flex min-h-11 items-center gap-2 text-sm text-foreground">
                     <input
                       type="radio"
                       name="resumeAction"

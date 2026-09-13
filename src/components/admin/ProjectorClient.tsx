@@ -109,20 +109,20 @@ export default function ProjectorClient({ eventId, qrSvg, initial }: { eventId: 
   const ringOffset = RING_CIRCUMFERENCE * (1 - ringFraction);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-10 bg-ink px-8 py-12 text-white lg:flex-row lg:gap-20">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-10 bg-projector px-8 py-12 text-projector-foreground lg:flex-row lg:gap-20">
       {reconnecting ? (
         <span
-          className="fixed right-6 top-6 flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/70"
+          className="fixed right-6 top-6 flex items-center gap-2 rounded-full bg-projector-foreground/10 px-3 py-1.5 text-xs font-medium text-projector-foreground/70"
           role="status"
         >
-          <span className="h-2 w-2 animate-pulse rounded-full bg-amber" aria-hidden="true" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-projector-accent" aria-hidden="true" />
           Reconnecting
         </span>
       ) : null}
 
       {data.codeAlert.suspicious ? (
         <span
-          className="fixed left-6 top-6 flex items-center gap-2 rounded-full bg-amber/20 px-3 py-1.5 text-xs font-medium text-amber"
+          className="fixed left-6 top-6 flex items-center gap-2 rounded-full bg-projector-accent/20 px-3 py-1.5 text-xs font-medium text-projector-accent"
           role="status"
         >
           <ShieldAlert size={14} aria-hidden="true" />
@@ -131,18 +131,18 @@ export default function ProjectorClient({ eventId, qrSvg, initial }: { eventId: 
       ) : null}
 
       <div className="flex flex-col items-center gap-6 text-center">
-        <p className="text-xl font-medium text-white/70">{data.name}</p>
+        <p className="text-xl font-medium text-projector-foreground/70">{data.name}</p>
 
         {data.open ? (
           <div className="relative flex items-center justify-center">
             <svg viewBox="0 0 200 200" className="h-[26vw] w-[26vw] max-h-72 max-w-72 lg:h-56 lg:w-56 -rotate-90">
-              <circle cx="100" cy="100" r={RING_RADIUS} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="6" />
+              <circle cx="100" cy="100" r={RING_RADIUS} fill="none" className="stroke-projector-foreground/12" strokeWidth="6" />
               <circle
                 cx="100"
                 cy="100"
                 r={RING_RADIUS}
                 fill="none"
-                className="stroke-amber"
+                className="stroke-projector-accent"
                 strokeWidth="6"
                 strokeLinecap="round"
                 strokeDasharray={RING_CIRCUMFERENCE}
@@ -150,28 +150,28 @@ export default function ProjectorClient({ eventId, qrSvg, initial }: { eventId: 
                 style={{ transition: "stroke-dashoffset 200ms linear" }}
               />
             </svg>
-            <div className="numeric absolute text-[18vw] font-semibold leading-none tracking-wider text-amber lg:text-[9vw]" aria-live="off">
+            <div className="numeric absolute text-[18vw] font-semibold leading-none tracking-wider text-projector-accent lg:text-[9vw]" aria-live="off">
               {code ?? "······"}
             </div>
           </div>
         ) : (
-          <p className="text-4xl font-semibold text-white/80">Registration closed</p>
+          <p className="text-4xl font-semibold text-projector-foreground/80">Registration closed</p>
         )}
 
         {data.open && remainingMs !== null ? (
-          <p className="numeric text-2xl font-medium text-white/70">
-            <span className={amber ? "text-amber" : undefined}>{formatClock(remainingMs)}</span> remaining
+          <p className="numeric text-2xl font-medium text-projector-foreground/70">
+            <span className={amber ? "text-projector-accent" : undefined}>{formatClock(remainingMs)}</span> remaining
           </p>
         ) : null}
 
-        <p className="numeric text-4xl font-semibold text-white">
-          {data.registrationCount} <span className="text-lg font-medium text-white/60">checked in</span>
+        <p className="numeric text-4xl font-semibold text-projector-foreground">
+          {data.registrationCount} <span className="text-lg font-medium text-projector-foreground/60">checked in</span>
         </p>
       </div>
 
       <div className="flex flex-col items-center gap-3">
-        <div className="w-56 max-w-full rounded-2xl bg-white p-4" dangerouslySetInnerHTML={{ __html: qrSvg }} />
-        <p className="text-lg font-medium text-white/70">Scan to check in</p>
+        <div className="w-56 max-w-full rounded-2xl bg-projector-qr p-4" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+        <p className="text-lg font-medium text-projector-foreground/70">Scan to check in</p>
       </div>
     </div>
   );

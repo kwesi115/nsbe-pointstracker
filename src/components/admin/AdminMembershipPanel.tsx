@@ -77,7 +77,7 @@ export default function AdminMembershipPanel({ member, season }: { member: Membe
           <th className={thClass}></th>
         </Thead>
         <tbody>
-          <tr className="border-b border-line">
+          <tr className="border-b border-border">
             <td className={tdClass}>Dues</td>
             <td className={tdClass}>{member.duesReportedAt ? formatDateTime(member.duesReportedAt) : "—"}</td>
             <td className={tdClass}>

@@ -90,7 +90,7 @@ export default function ResponsesTable({ responses, fieldKeys, fieldLabels }: { 
           </Thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.id} className="border-b border-line last:border-0">
+              <tr key={r.id} className="border-b border-border last:border-0">
                 <td className={tdClass}>
                   {r.firstName} {r.lastName}
                   <div className="text-xs text-muted">{r.email}</div>

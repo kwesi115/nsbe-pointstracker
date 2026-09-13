@@ -36,7 +36,7 @@ type MembershipMember = Pick<
 function ClaimLine({ state, note }: { state: ClaimState; note: string }) {
   if (state === "verified") {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-signal">
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-signal-strong">
         <Check size={14} aria-hidden="true" />
         Verified by E-Board
       </span>
@@ -49,7 +49,7 @@ function ClaimLine({ state, note }: { state: ClaimState; note: string }) {
   }
   if (state === "pending") {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#7a4d00]">
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-torch-strong">
         <Hand size={14} aria-hidden="true" />
         Self-reported
       </span>
@@ -116,17 +116,17 @@ export default function MembershipSection({
   return (
     <section id="membership" className="scroll-mt-20 flex flex-col gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Membership</h2>
-      <Card className={eligible ? "" : "border-amber bg-amber/10"}>
+      <Card className={eligible ? "" : "border-torch bg-torch/10"}>
         <div className="flex flex-col gap-4">
           {!eligible ? (
-            <p className="text-sm text-ink">You&apos;re on the leaderboard as soon as both are reported below — no waiting on E-Board.</p>
+            <p className="text-sm text-foreground">You&apos;re on the leaderboard as soon as both are reported below — no waiting on E-Board.</p>
           ) : (
-            <p className="text-sm font-medium text-signal">Both reported — you&apos;re on the leaderboard.</p>
+            <p className="text-sm font-medium text-signal-strong">Both reported — you&apos;re on the leaderboard.</p>
           )}
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 first:border-0 first:pt-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 first:border-0 first:pt-0">
             <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium text-ink">Chapter dues{season ? ` · ${season}` : ""}</p>
+              <p className="text-sm font-medium text-foreground">Chapter dues{season ? ` · ${season}` : ""}</p>
               <div className="flex items-center gap-2">
                 <ClaimLine state={duesState} note={member.duesRevokedNote} />
                 {duesConfirmed ? <Badge tone="muted">Counts for the leaderboard</Badge> : null}
@@ -139,7 +139,7 @@ export default function MembershipSection({
                     href={membershipSiteUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-signal underline underline-offset-2"
+                    className="inline-flex items-center gap-1 text-sm text-signal-strong underline underline-offset-2"
                   >
                     Pay dues
                     <ExternalLink size={12} aria-hidden="true" />
@@ -152,9 +152,9 @@ export default function MembershipSection({
             ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
             <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium text-ink">National NSBE membership{season ? ` · ${season}` : ""}</p>
+              <p className="text-sm font-medium text-foreground">National NSBE membership{season ? ` · ${season}` : ""}</p>
               <div className="flex items-center gap-2">
                 <ClaimLine state={nationalState} note={member.nationalRevokedNote} />
                 {nationalConfirmed ? <Badge tone="muted">Counts for the leaderboard</Badge> : null}
@@ -167,7 +167,7 @@ export default function MembershipSection({
                     href={nationalMembershipUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-signal underline underline-offset-2"
+                    className="inline-flex items-center gap-1 text-sm text-signal-strong underline underline-offset-2"
                   >
                     NSBE.org
                     <ExternalLink size={12} aria-hidden="true" />
@@ -180,7 +180,7 @@ export default function MembershipSection({
             ) : null}
           </div>
 
-          <div className="border-t border-line pt-4">
+          <div className="border-t border-border pt-4">
             <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText}>
               {(id, describedBy) => (
                 <div className="flex flex-wrap items-start gap-3">

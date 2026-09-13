@@ -1,6 +1,6 @@
 # NSBE Points Tracker
 
-Chapter attendance and points tracking for Howard University NSBE — check-in, leaderboards,
+Chapter attendance and points tracking for Howard NSBE — check-in, leaderboards,
 membership eligibility, and season reporting, replacing the old shared Excel workbook.
 
 ## Table of contents

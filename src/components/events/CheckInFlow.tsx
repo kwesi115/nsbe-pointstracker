@@ -200,7 +200,7 @@ export default function CheckInFlow({
     if (skipForm) {
       return (
         <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-          <div className="flex flex-col gap-0.5 rounded-lg bg-surface-sunken px-3 py-2.5 text-sm text-ink">
+          <div className="flex flex-col gap-0.5 rounded-lg bg-surface-raised px-3 py-2.5 text-sm text-foreground">
             <p>
               <strong className="font-semibold">
                 {member.firstName} {member.lastName}
@@ -254,29 +254,29 @@ export default function CheckInFlow({
       {result?.eboardPointsAwarded !== null && result?.eboardPointsAwarded !== undefined ? (
         result.eboardPointsAwarded > 0 ? (
           <>
-            <p className="text-sm font-semibold uppercase tracking-wide text-signal">Checked in</p>
-            <p className="numeric text-5xl font-semibold text-ink">
+            <p className="text-sm font-semibold uppercase tracking-wide text-signal-strong">Checked in</p>
+            <p className="numeric text-5xl font-semibold text-foreground">
               +{result.eboardPointsAwarded} <span className="text-lg font-semibold text-muted">· E-Board</span>
             </p>
           </>
         ) : (
           // countsForEboard: false on this specific event — never a bare "+0", which reads as a bug.
           <>
-            <p className="text-sm font-semibold uppercase tracking-wide text-signal">Attendance recorded · E-Board</p>
+            <p className="text-sm font-semibold uppercase tracking-wide text-signal-strong">Attendance recorded · E-Board</p>
             <p className="max-w-xs text-sm text-muted">This event doesn&apos;t count toward the internal E-Board track.</p>
           </>
         )
       ) : result?.eligible ? (
         <>
-          <p className="text-sm font-semibold uppercase tracking-wide text-signal">Checked in</p>
-          <p className="numeric text-5xl font-semibold text-ink">+{result?.pointsAwarded}</p>
+          <p className="text-sm font-semibold uppercase tracking-wide text-signal-strong">Checked in</p>
+          <p className="numeric text-5xl font-semibold text-foreground">+{result?.pointsAwarded}</p>
           <p className="text-sm text-muted">
             {result?.total} points total{result?.rank ? ` · rank #${result.rank}` : ""}
           </p>
         </>
       ) : (
         <>
-          <p className="text-sm font-semibold uppercase tracking-wide text-signal">Attendance recorded</p>
+          <p className="text-sm font-semibold uppercase tracking-wide text-signal-strong">Attendance recorded</p>
           <p className="max-w-xs text-sm text-muted">
             Your points will count toward the leaderboard once your chapter dues and National NSBE membership are
             confirmed. See your dashboard for what&apos;s outstanding.
@@ -289,7 +289,7 @@ export default function CheckInFlow({
         </Button>
         <Button href="/events">More events</Button>
       </div>
-      <Link href={`/leaderboard`} className="text-sm text-muted underline underline-offset-2 hover:text-ink">
+      <Link href={`/leaderboard`} className="text-sm text-muted underline underline-offset-2 hover:text-foreground">
         See the leaderboard
       </Link>
     </div>

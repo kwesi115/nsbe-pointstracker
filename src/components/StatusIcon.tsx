@@ -22,10 +22,10 @@ export default function StatusIcon({
   labels?: { yes?: string; no?: string; pending?: string };
 }) {
   if (value === null) {
-    return <Clock size={16} className="text-[#7a4d00]" aria-label={labels?.pending ?? "Pending"} />;
+    return <Clock size={16} className="text-torch-strong" aria-label={labels?.pending ?? "Pending"} />;
   }
   if (value) {
-    return <Check size={16} className="text-signal" aria-label={labels?.yes ?? "Yes"} />;
+    return <Check size={16} className="text-signal-strong" aria-label={labels?.yes ?? "Yes"} />;
   }
   return <X size={16} className="text-muted" aria-label={labels?.no ?? "No"} />;
 }

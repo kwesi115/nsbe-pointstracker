@@ -87,7 +87,7 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="text-xs font-semibold text-signal underline underline-offset-2"
+            className="text-xs font-semibold text-signal-strong underline underline-offset-2"
           >
             Edit
           </button>
@@ -98,33 +98,33 @@ export default function ProfileSection({ member, majors }: { member: ProfileMemb
           <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-xs text-muted">Name</dt>
-              <dd className="text-ink">
+              <dd className="text-foreground">
                 {member.firstName} {member.lastName}
               </dd>
             </div>
             <div>
               <dt className="text-xs text-muted">Student ID</dt>
-              <dd className="text-ink">{member.studentId || "—"}</dd>
+              <dd className="text-foreground">{member.studentId || "—"}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted">Phone</dt>
-              <dd className="text-ink">{member.phone || "—"}</dd>
+              <dd className="text-foreground">{member.phone || "—"}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted">Personal email</dt>
-              <dd className="text-ink">{member.personalEmail || "—"}</dd>
+              <dd className="text-foreground">{member.personalEmail || "—"}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted">T-shirt size</dt>
-              <dd className="text-ink">{member.tshirtSize || "—"}</dd>
+              <dd className="text-foreground">{member.tshirtSize || "—"}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted">Classification</dt>
-              <dd className="text-ink">{CLASSIFICATION_OPTIONS.find((o) => o.value === member.classification)?.label ?? "—"}</dd>
+              <dd className="text-foreground">{CLASSIFICATION_OPTIONS.find((o) => o.value === member.classification)?.label ?? "—"}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted">Major</dt>
-              <dd className="text-ink">{(member.major === "" ? "" : member.major === "Other" ? member.majorOther : member.major) || "—"}</dd>
+              <dd className="text-foreground">{(member.major === "" ? "" : member.major === "Other" ? member.majorOther : member.major) || "—"}</dd>
             </div>
           </dl>
         ) : (

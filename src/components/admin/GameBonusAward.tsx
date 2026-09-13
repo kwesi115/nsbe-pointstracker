@@ -49,25 +49,25 @@ export default function GameBonusAward({ eventId, responses }: { eventId: string
       {/* A form submit, so the selection and the reason travel with the request
           and the button is disabled for the real duration of the write. */}
       <form action={award.formAction} onSubmit={award.onSubmit} className="flex flex-col gap-4">
-        <p className="text-sm font-medium text-ink">Select members to award a game/competition bonus</p>
+        <p className="text-sm font-medium text-foreground">Select members to award a game/competition bonus</p>
         <input type="hidden" name="eventId" value={eventId} />
         {[...selected].map((email) => (
           <input key={email} type="hidden" name="emails" value={email} />
         ))}
-        <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-line p-2">
+        <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-border p-2">
           {responses.map((r) => (
-            <label key={r.email} className="flex min-h-9 items-center gap-2 text-sm text-ink">
+            <label key={r.email} className="flex min-h-9 items-center gap-2 text-sm text-foreground">
               <input type="checkbox" checked={selected.has(r.email)} onChange={() => toggle(r.email)} className="h-4 w-4" />
               {r.firstName} {r.lastName} <span className="text-xs text-muted">{r.email}</span>
             </label>
           ))}
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <label className="flex flex-col gap-1.5 text-sm font-medium text-ink">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
             Points
             <input type="number" name="points" defaultValue={1} min={0} required className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1.5 text-sm font-medium text-ink">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
             Reason
             <input
               name="reason"

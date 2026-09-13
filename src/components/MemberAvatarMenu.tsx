@@ -50,14 +50,14 @@ export default function MemberAvatarMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account menu"
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-ink text-sm font-semibold text-white"
+        className="flex h-11 w-11 items-center justify-center rounded-full bg-inverse text-sm font-semibold text-on-inverse"
       >
         {initial}
       </button>
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-[var(--z-dropdown)] mt-2 w-56 rounded-xl border border-line bg-surface p-2 shadow-lg"
+          className="absolute right-0 z-[var(--z-dropdown)] mt-2 w-56 rounded-xl border border-border bg-surface p-2 shadow-lg"
         >
           <p className="truncate px-3 py-2 text-sm text-muted">{firstName ? `Hi, ${firstName}` : email}</p>
           {adminHref ? (
@@ -65,7 +65,7 @@ export default function MemberAvatarMenu({
               href={adminHref}
               role="menuitem"
               onClick={() => setOpen(false)}
-              className="flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-ink hover:bg-surface-sunken"
+              className="flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-foreground hover:bg-surface-raised"
             >
               {adminLabel}
             </Link>
@@ -74,7 +74,7 @@ export default function MemberAvatarMenu({
             <button
               type="submit"
               role="menuitem"
-              className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm font-medium text-ink hover:bg-surface-sunken"
+              className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm font-medium text-foreground hover:bg-surface-raised"
             >
               Sign out
             </button>

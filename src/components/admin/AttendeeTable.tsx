@@ -131,8 +131,8 @@ export default function AttendeeTable({
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="numeric text-sm text-muted">
-          <span className="font-semibold text-ink">{total}</span> checked in ·{" "}
-          <span className="font-semibold text-ink">{totalPoints}</span> points awarded
+          <span className="font-semibold text-foreground">{total}</span> checked in ·{" "}
+          <span className="font-semibold text-foreground">{totalPoints}</span> points awarded
         </p>
         <label className="flex min-w-56 flex-col gap-1 text-xs font-medium text-muted">
           Search this event
@@ -166,7 +166,7 @@ export default function AttendeeTable({
             </Thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.registrationId} className="border-b border-line last:border-0">
+                <tr key={r.registrationId} className="border-b border-border last:border-0">
                   <td className={tdClass}>{memberDisplayName(r.firstName, r.lastName, r.email)}</td>
                   <td className={tdClass}>{r.email}</td>
                   <td className={tdClass}>{formatClassification(r.classification) || "—"}</td>
@@ -231,19 +231,19 @@ export default function AttendeeTable({
           onSuccess={() => removedLocally(removing.row)}
           description={
           <div className="flex flex-col gap-3">
-            <p className="text-sm text-ink">
+            <p className="text-sm text-foreground">
               {memberDisplayName(removing.row.firstName, removing.row.lastName, removing.row.email)} will be removed from
               this event.
             </p>
             {/* The impact, spelled out: removal lowers a leaderboard total. */}
             {removing.impact ? (
-              <div className="flex flex-col gap-1 rounded-lg bg-surface-sunken px-3 py-2 text-sm">
-                <p className="text-ink">
+              <div className="flex flex-col gap-1 rounded-lg bg-surface-raised px-3 py-2 text-sm">
+                <p className="text-foreground">
                   They lose <span className="numeric font-semibold">{removing.impact.pointsLost}</span> point
                   {removing.impact.pointsLost === 1 ? "" : "s"} from their season total.
                 </p>
                 {removing.impact.groupBonusChange ? (
-                  <p className="text-ink">
+                  <p className="text-foreground">
                     Their {removing.impact.groupBonusChange.groupName} bonus changes from{" "}
                     <span className="numeric font-semibold">{removing.impact.groupBonusChange.from}</span> to{" "}
                     <span className="numeric font-semibold">{removing.impact.groupBonusChange.to}</span>.
@@ -272,7 +272,7 @@ export default function AttendeeTable({
           // the server stored rather than to what the input happened to hold.
           onSuccess={(state) => repointedLocally(editing, state.points ?? editing.pointsAwarded)}
           description={
-            <p className="text-sm text-ink">
+            <p className="text-sm text-foreground">
               {memberDisplayName(editing.firstName, editing.lastName, editing.email)} currently has{" "}
               <span className="numeric font-semibold">{editing.pointsAwarded}</span>.
             </p>

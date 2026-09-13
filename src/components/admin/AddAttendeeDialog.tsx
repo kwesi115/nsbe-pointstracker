@@ -140,11 +140,11 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
         onClose={() => {
           if (!add.pending) setOpen(false);
         }}
-        className="inset-x-0 top-auto bottom-0 m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border border-line bg-surface p-0 backdrop:bg-ink/50 sm:inset-0 sm:m-auto sm:max-h-[85dvh] sm:w-full sm:max-w-lg sm:rounded-xl"
+        className="inset-x-0 top-auto bottom-0 m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border border-border bg-surface p-0 backdrop:bg-scrim/50 sm:inset-0 sm:m-auto sm:max-h-[85dvh] sm:w-full sm:max-w-lg sm:rounded-xl"
       >
         <form action={add.formAction} onSubmit={add.onSubmit} className="pb-safe-bottom flex flex-col gap-4 p-5">
           <div>
-            <h2 className="font-display text-lg font-bold text-ink">Add attendees</h2>
+            <h2 className="font-display text-lg font-bold text-foreground">Add attendees</h2>
             <p className="text-sm text-muted">{eventName}</p>
           </div>
 
@@ -173,7 +173,7 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
             )}
           </Field>
 
-          <div className="max-h-56 overflow-y-auto rounded-lg border border-line">
+          <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
             {candidates.length === 0 ? (
               <p className="px-3 py-4 text-sm text-muted">
                 {isPending ? "Searching…" : "Nobody left to add matching that search."}
@@ -181,8 +181,8 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
             ) : (
               <ul className="flex flex-col">
                 {candidates.map((m) => (
-                  <li key={m.email} className="border-b border-line last:border-0">
-                    <label className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-surface-sunken">
+                  <li key={m.email} className="border-b border-border last:border-0">
+                    <label className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-surface-raised">
                       <input
                         type="checkbox"
                         checked={selected.has(m.email)}
@@ -190,7 +190,7 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
                         className="h-4 w-4"
                       />
                       <span className="flex flex-col">
-                        <span className="text-ink">{memberDisplayName(m.firstName, m.lastName, m.email)}</span>
+                        <span className="text-foreground">{memberDisplayName(m.firstName, m.lastName, m.email)}</span>
                         <span className="text-xs text-muted">
                           {m.email}
                           {m.studentId ? ` · ${m.studentId}` : ""}
@@ -205,7 +205,7 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
           </div>
 
           {chosen.length > 0 ? (
-            <p className="text-sm text-ink">
+            <p className="text-sm text-foreground">
               <span className="numeric font-semibold">{chosen.length}</span> selected
             </p>
           ) : null}
@@ -226,21 +226,21 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
 
           {/* Everything the officer can't see from the picker. */}
           {preview ? (
-            <div className="flex flex-col gap-2 rounded-lg bg-surface-sunken px-3 py-3 text-sm">
-              <p className="font-semibold text-ink">
+            <div className="flex flex-col gap-2 rounded-lg bg-surface-raised px-3 py-3 text-sm">
+              <p className="font-semibold text-foreground">
                 {preview.totalPoints} point{preview.totalPoints === 1 ? "" : "s"} will be awarded
                 {preview.eventClosed ? " to a closed event" : ""}.
               </p>
               <ul className="flex flex-col gap-1">
                 {preview.members.map((m) => (
                   <li key={m.email} className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-ink">{m.name}</span>
-                    <span className="numeric font-semibold text-ink">{m.points}</span>
+                    <span className="text-foreground">{m.name}</span>
+                    <span className="numeric font-semibold text-foreground">{m.points}</span>
                     {m.zeroByRole ? (
                       <span className="text-xs text-muted">(0 on the member track — earns on the E-Board track)</span>
                     ) : null}
                     {m.groupBonusChange ? (
-                      <span className="text-xs text-ink">
+                      <span className="text-xs text-foreground">
                         · {m.groupBonusChange.groupName} bonus {m.groupBonusChange.from} → {m.groupBonusChange.to}
                       </span>
                     ) : null}
@@ -248,7 +248,7 @@ export default function AddAttendeeDialog({ eventId, eventName }: { eventId: str
                 ))}
               </ul>
               {preview.monthlyChampionStillOpen && preview.monthlyChampionMonth ? (
-                <p className="text-ink">
+                <p className="text-foreground">
                   {preview.monthlyChampionMonth} is still open — this counts toward the Monthly Engagement Champion and
                   can change who wins it.
                 </p>

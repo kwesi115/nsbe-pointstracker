@@ -30,7 +30,7 @@ export default async function SetPasswordPage({ searchParams }: SetPasswordPageP
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-24 text-center">
       <div>
-        <h1 className="font-display text-2xl font-bold text-ink">Choose a password</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Choose a password</h1>
         <p className="max-w-sm text-sm text-muted">
           Set a real password to finish setting up your account. You won&apos;t be able to
           register for events until this is done.

@@ -23,8 +23,8 @@ export default function AccessDenied({ denied }: { denied: AdminPageDenied }) {
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center px-6 py-24">
-      <div className="flex w-full flex-col items-center gap-3 rounded-xl border border-dashed border-line px-6 py-12 text-center">
-        <h1 className="font-display text-base font-bold text-ink">{heading}</h1>
+      <div className="flex w-full flex-col items-center gap-3 rounded-xl border border-dashed border-border px-6 py-12 text-center">
+        <h1 className="font-display text-base font-bold text-foreground">{heading}</h1>
         <p className="max-w-sm text-sm text-muted">{body}</p>
         <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
           {/* Omitted when /admin would deny them too — an action that leads
@@ -41,7 +41,7 @@ export default function AccessDenied({ denied }: { denied: AdminPageDenied }) {
       </div>
       <p className="mt-4 text-sm text-muted">
         Wrong page?{" "}
-        <Link href="/dashboard" className="underline underline-offset-2 hover:text-ink">
+        <Link href="/dashboard" className="underline underline-offset-2 hover:text-foreground">
           Go to your dashboard
         </Link>
       </p>

@@ -4,7 +4,7 @@ import { useId, type ReactNode } from "react";
 // on focus of any input under 16px, which shifts the layout mid-form. Only
 // safe to drop to 14px at md: and up, where there's no touch-zoom to trigger.
 export const inputClass =
-  "min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-base text-ink placeholder:text-muted focus-visible:border-signal disabled:opacity-50 md:text-sm";
+  "min-h-11 w-full rounded-lg border border-border bg-input px-3 py-2 text-base text-foreground placeholder:text-muted focus-visible:border-signal disabled:opacity-50 md:text-sm";
 
 export const selectClass = inputClass;
 export const textareaClass = `${inputClass} min-h-24`;
@@ -37,7 +37,7 @@ export default function Field({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-ink">
+      <label htmlFor={id} className="text-sm font-medium text-foreground">
         {label}
         {required ? (
           <span aria-hidden="true" className="text-alert">

@@ -120,7 +120,7 @@ export default function EventsBoard({
   return (
     <div className="flex flex-col gap-8">
       {eboardOnlyCount > 0 ? (
-        <label className="flex min-h-11 w-fit items-center gap-2 text-sm text-ink">
+        <label className="flex min-h-11 w-fit items-center gap-2 text-sm text-foreground">
           <input type="checkbox" checked={showEboardOnly} onChange={(e) => setShowEboardOnly(e.target.checked)} className="h-4 w-4" />
           Show E-Board-only events ({eboardOnlyCount})
         </label>
@@ -170,7 +170,7 @@ function RowShell({
     <Card className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
-          <p className="flex items-center gap-2 font-display text-base font-bold text-ink">
+          <p className="flex items-center gap-2 font-display text-base font-bold text-foreground">
             {event.name}
             {event.audience === "eboard_only" ? <Badge tone="amber">E-Board only</Badge> : null}
           </p>
@@ -192,18 +192,18 @@ function OpenRow({ event, onChanged }: { event: EventWithAlert; onChanged: () =>
       event={event}
       sub={
         <>
-          <span className="numeric font-semibold text-signal">{pluralize(event.registrationCount, "registration")}</span>
+          <span className="numeric font-semibold text-signal-strong">{pluralize(event.registrationCount, "registration")}</span>
           {event.closesAt ? (
             <>
               {" · closes in "}
-              <Countdown to={event.closesAt} className="font-semibold text-ink" />
+              <Countdown to={event.closesAt} className="font-semibold text-foreground" />
             </>
           ) : null}
         </>
       }
       banner={
         event.codeAlert.suspicious ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-ink">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-torch-border bg-torch-subtle px-3 py-2 text-sm text-foreground">
             <span className="flex items-center gap-2">
               <ShieldAlert size={16} aria-hidden="true" />
               {event.codeAlert.locked
@@ -364,7 +364,7 @@ function PastRow({
           {exportsEnabled ? (
             <a
               href={`/api/admin/export/event/${event.eventId}/csv`}
-              className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+              className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
             >
               Export CSV
             </a>

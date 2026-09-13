@@ -21,14 +21,14 @@ const VISIBLE_BY_DEFAULT = new Set([
 export default function CoreFormPreview() {
   const sections: CoreFormSection[] = ["info", "membership", "house_resume"];
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface-sunken p-4">
+    <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface-raised p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">Always asked</p>
       {sections.map((section) => (
         <div key={section} className="flex flex-col gap-1.5">
           <p className="text-xs font-medium text-muted">{CORE_FORM_SECTIONS[section]}</p>
           <ul className="flex flex-col gap-1">
             {CORE_FORM_FIELDS.filter((f) => f.section === section && VISIBLE_BY_DEFAULT.has(f.id)).map((f) => (
-              <li key={f.id} className="text-sm text-ink">
+              <li key={f.id} className="text-sm text-foreground">
                 {f.label}
                 {f.required ? <span className="text-alert"> *</span> : null}
               </li>

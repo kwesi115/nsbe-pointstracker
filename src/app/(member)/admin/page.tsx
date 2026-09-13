@@ -18,13 +18,13 @@ export default async function AdminEventsPage() {
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-bold text-ink">Events</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Events</h1>
         <Button href="/admin/events/new">New event</Button>
       </div>
       <AdminNav active="/admin" access={guard.access} />
 
       {suspiciousEvents.length > 0 ? (
-        <div className="flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-ink">
+        <div className="flex flex-col gap-2 rounded-xl border border-torch-border bg-torch-subtle px-4 py-3 text-sm text-foreground">
           <p className="flex items-center gap-2 font-semibold">
             <ShieldAlert size={16} aria-hidden="true" /> Unusual check-in code activity
           </p>

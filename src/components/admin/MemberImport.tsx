@@ -102,7 +102,7 @@ export default function MemberImport() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken">
+        <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-semibold text-foreground hover:bg-surface-raised">
           <Upload size={16} aria-hidden="true" />
           Upload CSV
           <input
@@ -126,9 +126,9 @@ export default function MemberImport() {
       ) : null}
 
       {preview ? (
-        <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4">
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-ink">
+            <p className="text-sm text-foreground">
               <strong className="numeric">{preview.toCreate.length}</strong> will be created,{" "}
               <strong className="numeric">{preview.toSkip.length}</strong> will be skipped.
             </p>
@@ -152,7 +152,7 @@ export default function MemberImport() {
 
           {preview.toSkip.length > 0 ? (
             <details className="text-xs text-muted">
-              <summary className="cursor-pointer font-medium text-ink">Skipped rows</summary>
+              <summary className="cursor-pointer font-medium text-foreground">Skipped rows</summary>
               <ul className="mt-2 flex flex-col gap-1">
                 {preview.toSkip.map((s, i) => (
                   <li key={i}>

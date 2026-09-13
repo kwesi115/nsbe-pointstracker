@@ -289,10 +289,10 @@ function AccountTypeStep({
             type="button"
             onClick={() => onSelect(t.value)}
             className={`flex flex-col gap-1 rounded-xl border px-4 py-3 text-left transition-colors ${
-              value === t.value ? "border-signal bg-signal/5" : "border-line bg-white hover:bg-surface-sunken"
+              value === t.value ? "border-signal bg-signal/5" : "border-border bg-surface hover:bg-surface-raised"
             }`}
           >
-            <span className="text-sm font-semibold text-ink">{t.label}</span>
+            <span className="text-sm font-semibold text-foreground">{t.label}</span>
             <span className="text-xs text-muted">{t.description}</span>
           </button>
         ))}
@@ -326,7 +326,7 @@ function JoinCodeStep({
   return (
     <StepCard title="Enter your join code" onBack={onBack}>
       <p className="text-sm text-muted">
-        You picked <strong className="text-ink">{accountType}</strong>. The code you enter — not this choice —
+        You picked <strong className="text-foreground">{accountType}</strong>. The code you enter — not this choice —
         decides the account you get.
       </p>
       <form action={formAction} className="flex flex-col gap-4">
@@ -345,7 +345,7 @@ function JoinCodeStep({
               spellCheck={false}
               inputMode="text"
               placeholder="XXXXXXXX"
-              className="min-h-16 w-full rounded-xl border border-line bg-white px-4 text-center font-display text-3xl font-bold uppercase tracking-[0.3em] text-ink placeholder:text-line focus-visible:border-signal disabled:opacity-50"
+              className="min-h-16 w-full rounded-xl border border-border bg-input px-4 text-center font-display text-3xl font-bold uppercase tracking-[0.3em] text-foreground placeholder:text-placeholder-faint focus-visible:border-signal disabled:opacity-50"
             />
           )}
         </Field>
@@ -400,9 +400,9 @@ function AccountStep({
   return (
     <StepCard title="Your account" onBack={onBack}>
       {draft.resolvedRole && draft.accountType !== "general" ? (
-        <p className="text-sm font-medium text-signal">{ROLE_COPY[draft.resolvedRole]}</p>
+        <p className="text-sm font-medium text-signal-strong">{ROLE_COPY[draft.resolvedRole]}</p>
       ) : draft.accountType === "general" ? (
-        <p className="text-sm font-medium text-signal">No code needed — this creates a general member account.</p>
+        <p className="text-sm font-medium text-signal-strong">No code needed — this creates a general member account.</p>
       ) : null}
       <form action={formAction} className="flex flex-col gap-4">
         <input type="hidden" name="code" value={draft.code} />
@@ -553,7 +553,7 @@ function AboutYouStep({
         {draft.firstName} {draft.lastName} · {draft.studentId} · {formatClassification(draft.classification)} ·{" "}
         {draft.major === OTHER_MAJOR ? draft.majorOther : draft.major}
       </p>
-      <p className="text-xs font-medium text-signal">
+      <p className="text-xs font-medium text-signal-strong">
         Account created: {draft.resolvedRole ? ACCOUNT_TYPE_LABEL[draft.resolvedRole] : "General member"}
         {downgraded ? " — your code didn't grant that access level, so we created a general member account instead." : ""}
       </p>

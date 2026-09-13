@@ -167,7 +167,7 @@ export default function FormBuilder({
     <div className="grid gap-8 lg:grid-cols-2">
       <div className="flex flex-col gap-4">
         {locked ? (
-          <p className="rounded-lg border border-amber bg-amber/10 px-3 py-2 text-sm text-ink">
+          <p className="rounded-lg border border-torch bg-torch/10 px-3 py-2 text-sm text-foreground">
             Responses already exist for this event — existing questions can&apos;t be removed, renamed, or change
             type. New questions must be optional.
           </p>
@@ -206,7 +206,7 @@ export default function FormBuilder({
                   const from = Number(e.dataTransfer.getData(dragIndex));
                   if (!Number.isNaN(from)) move(from, index);
                 }}
-                className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4"
+                className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4"
               >
                 <div className="flex items-start gap-2">
                   <GripVertical size={18} className="mt-2.5 shrink-0 cursor-grab text-muted" aria-hidden="true" />
@@ -271,7 +271,7 @@ export default function FormBuilder({
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+                  <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
                     <input
                       type="checkbox"
                       checked={field.required}
@@ -313,7 +313,7 @@ export default function FormBuilder({
 
       <div className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Live preview</h2>
-        <div className="rounded-xl border border-line bg-surface p-5">
+        <div className="rounded-xl border border-border bg-surface p-5">
           {previewFields.length === 0 ? (
             <p className="text-sm text-muted">No questions yet — this is exactly what a member with an empty form sees.</p>
           ) : (

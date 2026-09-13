@@ -27,7 +27,7 @@ export default async function AdminVerificationsPage() {
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-10">
       <div>
-        <h1 className="font-display text-2xl font-bold text-ink">Membership audit</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Membership audit</h1>
         <p className="text-sm text-muted">
           Dues, National NSBE membership, and House assignments members have self-reported, spot-checked against the
           real record.
@@ -41,7 +41,7 @@ export default async function AdminVerificationsPage() {
         </p>
       )}
 
-      <p className="rounded-lg border border-line bg-surface-sunken px-4 py-3 text-sm text-ink">
+      <p className="rounded-lg border border-border bg-surface-raised px-4 py-3 text-sm text-foreground">
         Members are on the leaderboard as soon as they report Yes — this queue confirms claims after the fact.
       </p>
 
@@ -65,7 +65,7 @@ export default async function AdminVerificationsPage() {
           accounts went unnoticed. Surfaced here, next to the queue an admin
           already works through, rather than left to be found by accident. */}
       {houseMissing.total > 0 ? (
-        <p className="rounded-lg border border-amber bg-amber/10 px-4 py-3 text-sm text-ink">
+        <p className="rounded-lg border border-torch bg-torch/10 px-4 py-3 text-sm text-foreground">
           <span className="font-semibold">
             {houseMissing.total} account{houseMissing.total === 1 ? " has" : "s have"} no House on file.
           </span>{" "}

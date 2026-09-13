@@ -117,22 +117,22 @@ export default function AttendanceDirectory({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
         {/* The list: bounded and independently scrolling, so it stays usable
             at 30+ events instead of pushing the detail off the page. */}
-        <nav aria-label="Events" className="flex max-h-[70vh] flex-col overflow-y-auto rounded-xl border border-line">
+        <nav aria-label="Events" className="flex max-h-[70vh] flex-col overflow-y-auto rounded-xl border border-border">
           {events.length === 0 ? (
             <p className="px-4 py-6 text-sm text-muted">No events match these filters.</p>
           ) : (
             <ul className="flex flex-col">
               {events.map((e) => (
-                <li key={e.eventId} className="border-b border-line last:border-0">
+                <li key={e.eventId} className="border-b border-border last:border-0">
                   <Link
                     href={hrefFor(e.eventId)}
                     aria-current={e.eventId === selectedId ? "true" : undefined}
-                    className={`flex flex-col gap-1 px-4 py-3 text-sm hover:bg-surface-sunken ${
+                    className={`flex flex-col gap-1 px-4 py-3 text-sm hover:bg-surface-raised ${
                       e.eventId === selectedId ? "bg-signal/10" : ""
                     }`}
                   >
                     <span className="flex items-center gap-2">
-                      <span className="font-semibold text-ink">{e.name}</span>
+                      <span className="font-semibold text-foreground">{e.name}</span>
                       {e.audience === "eboard_only" ? <Badge tone="amber">E-Board</Badge> : null}
                     </span>
                     <span className="text-xs text-muted">

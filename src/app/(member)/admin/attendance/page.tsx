@@ -81,7 +81,7 @@ export default async function AdminAttendancePage({
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-10">
       <div>
-        <h1 className="font-display text-2xl font-bold text-ink">Attendance</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Attendance</h1>
         <p className="text-sm text-muted">
           {canWrite
             ? "Open an event to see who attended, correct points, or add someone who missed check-in."
@@ -101,7 +101,7 @@ export default async function AdminAttendancePage({
           <Card className="flex flex-col gap-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="font-display text-lg font-bold text-ink">{selectedEvent.name}</h2>
+                <h2 className="font-display text-lg font-bold text-foreground">{selectedEvent.name}</h2>
                 <p className="text-sm text-muted">
                   {selectedEvent.date ? formatDate(selectedEvent.date) : "No date"} · {selectedEvent.categoryName}
                 </p>
@@ -111,7 +111,7 @@ export default async function AdminAttendancePage({
                 {guard.access.features.exports ? (
                   <a
                     href={`/api/admin/export/event/${selectedEvent.eventId}/csv`}
-                    className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+                    className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
                   >
                     <Download size={16} aria-hidden="true" /> Export CSV
                   </a>

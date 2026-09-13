@@ -66,12 +66,12 @@ export default function CompleteProfilePanel({ member, season }: { member: Panel
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Complete your profile</h2>
-      <Card className="border-amber bg-amber/10">
-        <p className="text-sm text-ink">Fill these in now so your next check-in is a single tap.</p>
+      <Card className="border-torch bg-torch/10">
+        <p className="text-sm text-foreground">Fill these in now so your next check-in is a single tap.</p>
         <ul className="mt-3 flex flex-col gap-2">
           {items.map((item) => (
             <li key={`${item.anchor}-${item.label}`}>
-              <Link href={item.anchor} className="text-sm font-medium text-signal underline underline-offset-2">
+              <Link href={item.anchor} className="text-sm font-medium text-signal-strong underline underline-offset-2">
                 {item.label}
               </Link>
             </li>

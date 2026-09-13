@@ -20,7 +20,7 @@ export default function EventCard({
       <Card className="flex flex-col gap-2 transition-colors hover:border-signal">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="font-display text-lg font-bold text-ink">{event.name}</h3>
+            <h3 className="font-display text-lg font-bold text-foreground">{event.name}</h3>
             <p className="text-sm text-muted">
               {event.category.shortName} · +{event.points ?? event.category.memberPoints} · {formatDate(event.date)} ·{" "}
               {event.location || "Location TBD"}
@@ -33,12 +33,12 @@ export default function EventCard({
         </div>
 
         {registered ? (
-          <p className="flex items-center gap-1.5 text-sm font-medium text-signal">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-signal-strong">
             <CheckCircle2 size={16} aria-hidden="true" /> You&apos;re checked in
           </p>
         ) : isOpen && event.closesAt ? (
           <p className="text-sm text-muted">
-            Closes in <Countdown to={event.closesAt} className="font-semibold text-ink" />
+            Closes in <Countdown to={event.closesAt} className="font-semibold text-foreground" />
           </p>
         ) : event.opensAt ? (
           <p className="text-sm text-muted">Opens {formatDateTime(event.opensAt)}</p>

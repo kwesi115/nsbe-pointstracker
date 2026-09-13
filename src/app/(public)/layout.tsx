@@ -2,13 +2,16 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { auth } from "@/auth";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import { getConfigValue, getOrgById } from "@/lib/repo";
 import { getOrgIdFromCookie } from "@/lib/org";
 import { isResumePath } from "@/lib/signup-routes";
 
 /**
- * Bare chrome for /, /org/[slug], /signin, /join — org name only, no nav, no
- * user menu (Part 1). A signed-in member can't see most of these: the
+ * Bare chrome for /, /org/[slug], /signin, /join — org name and the theme
+ * switch only (a first visit usually lands here, so the switch can't wait for
+ * sign-in), no nav, no user menu (Part 1). A signed-in member can't see most of
+ * these: the
  * exceptions are "/" itself, which stays reachable for a signed-in user who
  * has no org cookie yet (Part 2), "/join" — the join wizard signs the user in
  * immediately after step 3 (account creation), so steps 4-8 render (and POST
@@ -46,8 +49,9 @@ export default async function PublicLayout({ children }: { children: ReactNode }
 
   return (
     <div className="flex min-h-full flex-1 flex-col">
-      <header className="border-b border-line px-6 py-4">
-        <span className="font-display text-sm font-bold text-ink">{org?.name ?? chapterName}</span>
+      <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-2">
+        <span className="font-display text-sm font-bold text-foreground">{org?.name ?? chapterName}</span>
+        <ThemeToggle />
       </header>
       <div className="flex flex-1 flex-col">{children}</div>
     </div>

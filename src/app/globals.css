@@ -1,23 +1,76 @@
 @import "tailwindcss";
 
+/* `dark:` keys off the class lib/theme.ts puts on <html> (stored choice, else the OS setting), not prefers-color-scheme directly. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /*
  * Instrument-panel design system. Data (numerals, ranks, countdowns, codes)
  * is the hero — see AGENTS.md/design brief. Every number in the app uses
  * --font-mono with tabular figures so columns and countdowns don't jitter.
+ *
+ * THEME TOKENS. Every color in the app is one of the custom properties below,
+ * defined exactly twice: light on :root, dark on :root.dark. Components reach
+ * them only through the utilities mapped in @theme (bg-surface,
+ * text-foreground, border-border, ...) and never name a raw color — a stray
+ * bg-white or #hex stays light when the theme flips. theme-tokens.test.ts
+ * enforces both halves, and checks every dark text/background pair against
+ * WCAG AA.
+ *
+ * Accents are re-picked for dark rather than reused: #2f5bea reads on white
+ * but is too dark on navy, and white text on the lighter dark-mode accents
+ * falls under 4.5:1, so on-signal/on-alert flip to navy.
  */
 :root {
-  --ink: #0b1533;
-  --ink-soft: #16234e;
-  --signal: #2f5bea;
-  --amber: #ffb627;
-  --alert: #d6224c;
-  --paper: #eef1f9;
-  --line: rgba(11, 21, 51, 0.14);
+  color-scheme: light;
+
+  --background: #eef1f9; /* page */
+  --surface: #ffffff; /* cards, panels, header, dialogs */
+  --surface-raised: #e4e8f5; /* hover, chips, skeletons, progress tracks */
+  --input: #ffffff; /* form controls */
+  --border: rgba(11, 21, 51, 0.14);
+  --foreground: #0b1533;
   --muted: #5a6485;
 
-  /* Surfaces relative to --paper, for cards/rows on the light page background. */
-  --surface: #ffffff;
-  --surface-sunken: #e4e8f5;
+  --signal: #2f5bea; /* fills, strokes, borders, focus ring */
+  --signal-strong: #2f5bea; /* signal as text or icon: its own token so dark mode can lift it to AA */
+  --signal-hover: #2549c4;
+  --signal-active: #1e3da3;
+  --on-signal: #ffffff; /* text on a filled signal control */
+
+  --torch: #ffb627;
+  --torch-strong: #7a4d00; /* torch as readable text */
+  --torch-subtle: oklch(98.7% 0.022 95.277); /* warning banner fill */
+  --torch-border: oklch(87.9% 0.169 91.605); /* warning banner edge */
+
+  --alert: #d6224c;
+  --alert-hover: #b91d42;
+  --on-alert: #ffffff;
+
+  --success: #0f7a52;
+
+  --inverse: #0b1533; /* high-emphasis chips: success toast, avatar, active tab */
+  --on-inverse: #ffffff;
+  --scrim: #0b1533; /* modal backdrops and the image lightbox, dark in both themes */
+  --on-scrim: #ffffff;
+
+  --swatch-border: rgba(0, 0, 0, 0.15); /* ring that keeps a House dot visible against the page behind it */
+
+  --placeholder-faint: rgba(11, 21, 51, 0.14); /* the 000000 / XXXXXXXX mask in the big code inputs */
+  --placeholder-soft: rgba(90, 100, 133, 0.4); /* the join-code mask (muted at 40%) */
+
+  /*
+   * FIXED: deliberately never redefined under .dark.
+   *
+   * The projector display (/admin/events/[id]/display) is a wall screen for a
+   * room, not a UI surface, so it is dark in both themes. The org avatar sits
+   * on the chapter's own brand color, which is not a theme value either (and
+   * neither are House colors, which are data: see lib/houses.ts).
+   */
+  --projector-background: #0b1533;
+  --projector-foreground: #ffffff;
+  --projector-accent: #ffb627;
+  --projector-qr: #ffffff; /* QR codes scan dark-on-light only */
+  --on-brand: #ffffff;
 
   /*
    * The one stacking-order scale for every fixed/sticky element in the app —
@@ -43,17 +96,80 @@
   --bottom-nav-height: 4rem;
 }
 
+/* Shades of dark blue. */
+:root.dark {
+  color-scheme: dark;
+
+  --background: #0a1024;
+  --surface: #121a38;
+  --surface-raised: #1b2650;
+  --input: #1b2650;
+  --border: #2a3665;
+  --foreground: #e8ecf8;
+  --muted: #97a3c8;
+
+  --signal: #5b7cf5;
+  --signal-strong: #8ba3f9; /* #5b7cf5 as text is 3.9:1 on surface-raised and 4.1:1 on a signal/10 tint */
+  --signal-hover: #7a95f7;
+  --signal-active: #8fa6f9;
+  --on-signal: #0a1024; /* white on #5b7cf5 is 3.7:1 */
+
+  --torch: #ffc24b;
+  --torch-strong: #ffc24b;
+  --torch-subtle: rgba(255, 194, 75, 0.1);
+  --torch-border: rgba(255, 194, 75, 0.45);
+
+  --alert: #ff5c7a;
+  --alert-hover: #ff7a92;
+  --on-alert: #0a1024; /* white on #ff5c7a is 3.0:1 */
+
+  --success: #35d399;
+
+  --inverse: #e8ecf8;
+  --on-inverse: #0a1024;
+  --scrim: #02040c;
+  --on-scrim: #ffffff;
+
+  --swatch-border: rgba(232, 236, 248, 0.55); /* Johnson's #1a1a1a is about 1:1 against every dark surface without it */
+
+  /* The light-mode faintness is about 1.3:1 on a dark input. A placeholder is still text, so AA. */
+  --placeholder-faint: #97a3c8;
+  --placeholder-soft: #97a3c8;
+}
+
 @theme inline {
-  --color-ink: var(--ink);
-  --color-ink-soft: var(--ink-soft);
-  --color-signal: var(--signal);
-  --color-amber: var(--amber);
-  --color-alert: var(--alert);
-  --color-paper: var(--paper);
-  --color-line: var(--line);
-  --color-muted: var(--muted);
+  --color-background: var(--background);
   --color-surface: var(--surface);
-  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-raised: var(--surface-raised);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-signal: var(--signal);
+  --color-signal-strong: var(--signal-strong);
+  --color-signal-hover: var(--signal-hover);
+  --color-signal-active: var(--signal-active);
+  --color-on-signal: var(--on-signal);
+  --color-torch: var(--torch);
+  --color-torch-strong: var(--torch-strong);
+  --color-torch-subtle: var(--torch-subtle);
+  --color-torch-border: var(--torch-border);
+  --color-alert: var(--alert);
+  --color-alert-hover: var(--alert-hover);
+  --color-on-alert: var(--on-alert);
+  --color-success: var(--success);
+  --color-inverse: var(--inverse);
+  --color-on-inverse: var(--on-inverse);
+  --color-scrim: var(--scrim);
+  --color-on-scrim: var(--on-scrim);
+  --color-swatch-border: var(--swatch-border);
+  --color-placeholder-faint: var(--placeholder-faint);
+  --color-placeholder-soft: var(--placeholder-soft);
+  --color-projector: var(--projector-background);
+  --color-projector-foreground: var(--projector-foreground);
+  --color-projector-accent: var(--projector-accent);
+  --color-projector-qr: var(--projector-qr);
+  --color-on-brand: var(--on-brand);
 
   --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
   --font-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
@@ -61,8 +177,8 @@
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--background);
+  color: var(--foreground);
   font-family: var(--font-body);
 }
 

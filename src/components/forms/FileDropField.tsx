@@ -108,8 +108,8 @@ export default function FileDropField({
     <Field label={label} help={help} error={error ?? localError} required={required}>
       {(id, describedBy) =>
         filename && !uploading ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2.5">
-            <span className="flex min-w-0 items-center gap-2 text-sm text-ink">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
+            <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
               <FileText size={16} className="shrink-0 text-muted" aria-hidden="true" />
               <span className="truncate">{filename}</span>
               {sizeBytes !== null ? <span className="numeric shrink-0 text-xs text-muted">{formatBytes(sizeBytes)}</span> : null}
@@ -118,7 +118,7 @@ export default function FileDropField({
               type="button"
               onClick={clear}
               disabled={disabled}
-              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-sunken hover:text-ink"
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-raised hover:text-foreground"
               aria-label="Remove file"
             >
               <X size={16} />
@@ -143,7 +143,7 @@ export default function FileDropField({
               handleFiles(e.dataTransfer.files);
             }}
             className={`flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors ${
-              dragOver ? "border-signal bg-signal/5" : "border-line bg-surface"
+              dragOver ? "border-signal bg-signal/5" : "border-border bg-surface"
             }`}
           >
             <input
@@ -160,12 +160,12 @@ export default function FileDropField({
             {uploading ? (
               <div className="flex w-full max-w-40 flex-col gap-1">
                 <p className="numeric text-xs text-muted">Uploading… {progress}%</p>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
                   <div className="h-full bg-signal transition-[width]" style={{ width: `${progress}%` }} />
                 </div>
               </div>
             ) : (
-              <span className="text-sm font-medium text-signal underline underline-offset-2">
+              <span className="text-sm font-medium text-signal-strong underline underline-offset-2">
                 Choose a file
                 <span className="block text-xs font-normal text-muted no-underline">or drag and drop — max 10MB</span>
               </span>

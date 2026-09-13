@@ -17,7 +17,7 @@ export default function YesNo({
   return (
     <div className="flex gap-4" role="radiogroup" aria-label={label} aria-invalid={Boolean(error)} aria-describedby={describedBy}>
       {(["Yes", "No"] as const).map((opt) => (
-        <label key={opt} className="flex min-h-11 items-center gap-2 text-sm text-ink">
+        <label key={opt} className="flex min-h-11 items-center gap-2 text-sm text-foreground">
           <input
             type="radio"
             name={id}

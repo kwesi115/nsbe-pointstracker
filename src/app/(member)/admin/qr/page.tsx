@@ -13,7 +13,7 @@ export default async function AdminQrPage() {
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-6 py-10">
       <div className="print:hidden">
-        <h1 className="font-display text-2xl font-bold text-ink">Chapter QR code</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Chapter QR code</h1>
         <p className="text-sm text-muted">
           This code never changes and never expires — print it once and post it wherever members check in.
         </p>
@@ -29,13 +29,13 @@ export default async function AdminQrPage() {
         <div className="flex gap-2 print:hidden">
           <a
             href="/api/admin/qr/svg"
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
           >
             <Download size={16} aria-hidden="true" /> SVG
           </a>
           <a
             href="/api/admin/qr/png"
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
           >
             <Download size={16} aria-hidden="true" /> PNG
           </a>

@@ -15,7 +15,7 @@ export default async function GroupsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-6 py-10">
-      <h1 className="font-display text-2xl font-bold text-ink">NSBE Week / event groups</h1>
+      <h1 className="font-display text-2xl font-bold text-foreground">NSBE Week / event groups</h1>
       <AdminNav active="/admin/groups" access={guard.access} />
       <p className="text-sm text-muted">
         A set of events whose completion bonus is calculated only after the final event closes — see lib/points.ts
@@ -29,7 +29,7 @@ export default async function GroupsPage() {
           {groups.map((g) => (
             <Link key={g.id} href={`/admin/groups/${g.id}`} className="block rounded-xl focus-visible:outline-offset-4">
               <Card className="transition-colors hover:border-signal">
-                <p className="font-display text-base font-bold text-ink">{g.name}</p>
+                <p className="font-display text-base font-bold text-foreground">{g.name}</p>
                 <p className="text-sm text-muted">
                   {g.eventIds.length} of {g.expectedEventCount} events · {g.finalizedAt ? "Finalized" : "Not finalized"}
                 </p>

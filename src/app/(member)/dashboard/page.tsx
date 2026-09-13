@@ -37,9 +37,9 @@ function describeBonusTiers(tiers: BonusTier[]): string {
 
 function NsbeWeekBanner({ progress }: { progress: NsbeWeekProgress }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-amber bg-amber/10 px-4 py-3">
-      <p className="text-sm font-semibold text-ink">{progress.groupName}</p>
-      <p className="text-sm text-ink">
+    <div className="flex flex-col gap-1 rounded-xl border border-torch bg-torch/10 px-4 py-3">
+      <p className="text-sm font-semibold text-foreground">{progress.groupName}</p>
+      <p className="text-sm text-foreground">
         {progress.attended} of {progress.expectedEventCount} attended · {describeBonusTiers(progress.bonusTiers)} bonus
       </p>
     </div>
@@ -63,13 +63,13 @@ function BreakdownCard({ breakdown }: { breakdown: PointBreakdown }) {
         <dl className="flex flex-col gap-2 text-sm">
           {rows.map((r) => (
             <div key={r.label} className="flex items-center justify-between">
-              <dt className="text-ink">{r.label}</dt>
-              <dd className="numeric font-medium text-ink">{r.value}</dd>
+              <dt className="text-foreground">{r.label}</dt>
+              <dd className="numeric font-medium text-foreground">{r.value}</dd>
             </div>
           ))}
-          <div className="mt-1 flex items-center justify-between border-t border-line pt-2">
-            <dt className="font-semibold text-ink">Season total</dt>
-            <dd className="numeric text-lg font-bold text-signal">{breakdown.total}</dd>
+          <div className="mt-1 flex items-center justify-between border-t border-border pt-2">
+            <dt className="font-semibold text-foreground">Season total</dt>
+            <dd className="numeric text-lg font-bold text-signal-strong">{breakdown.total}</dd>
           </div>
         </dl>
       </Card>
@@ -137,7 +137,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6 md:gap-8 md:px-6 md:py-10">
-      <h1 className="font-display text-2xl font-bold text-ink">Dashboard</h1>
+      <h1 className="font-display text-2xl font-bold text-foreground">Dashboard</h1>
 
       {/* The single best attendance driver in the system — kept prominent, above the fold, during an active week. */}
       {nsbeWeekProgress ? <NsbeWeekBanner progress={nsbeWeekProgress} /> : null}
@@ -171,7 +171,7 @@ export default async function DashboardPage() {
           title="No events yet"
           description="Check in at your first event to start earning points — every General Body Meeting, workshop, or service event on the calendar counts. Points are only awarded to General members."
           action={
-            <Link href="/events" className="text-sm font-semibold text-signal underline underline-offset-2">
+            <Link href="/events" className="text-sm font-semibold text-signal-strong underline underline-offset-2">
               Browse events
             </Link>
           }
@@ -197,10 +197,10 @@ export default async function DashboardPage() {
                 spare. */}
             <div className="flex flex-col gap-2 md:hidden">
               {history.map((row) => (
-                <div key={row.id} className="rounded-xl border border-line bg-surface p-3">
+                <div key={row.id} className="rounded-xl border border-border bg-surface p-3">
                   <div className="flex items-start justify-between gap-3">
-                    <p className="text-sm font-medium text-ink">{eventById.get(row.eventId)?.name ?? row.eventId}</p>
-                    <span className="numeric shrink-0 text-base font-semibold text-ink">
+                    <p className="text-sm font-medium text-foreground">{eventById.get(row.eventId)?.name ?? row.eventId}</p>
+                    <span className="numeric shrink-0 text-base font-semibold text-foreground">
                       +{memberPointsFor({ role: "general" }, { points: row.eventPointsOverride }, row.category)}
                     </span>
                   </div>
@@ -225,7 +225,7 @@ export default async function DashboardPage() {
                 </Thead>
                 <tbody>
                   {history.map((row) => (
-                    <tr key={row.id} className="border-b border-line last:border-0">
+                    <tr key={row.id} className="border-b border-border last:border-0">
                       <td className={tdClass}>{eventById.get(row.eventId)?.name ?? row.eventId}</td>
                       <td className={tdClass}>{formatDate(row.timestamp)}</td>
                       <td className={tdClass}>{eventById.get(row.eventId)?.category.shortName ?? "—"}</td>
@@ -274,7 +274,7 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6 md:gap-8 md:px-6 md:py-10">
       <div>
         <div className="flex items-center gap-2">
-          <h1 className="font-display text-2xl font-bold text-ink">Dashboard</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">Dashboard</h1>
           <Badge tone="amber">E-Board internal</Badge>
         </div>
         <p className="text-sm text-muted">Your standing on the internal E-Board track — not visible to general members.</p>
@@ -297,9 +297,9 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
                 ["Retreats", row.retreats],
               ] as const
             ).map(([label, stats]) => (
-              <div key={label} className="flex items-center justify-between rounded-xl border border-line bg-surface p-3">
-                <p className="text-sm font-medium text-ink">{label}</p>
-                <div className="numeric flex gap-4 text-sm text-ink">
+              <div key={label} className="flex items-center justify-between rounded-xl border border-border bg-surface p-3">
+                <p className="text-sm font-medium text-foreground">{label}</p>
+                <div className="numeric flex gap-4 text-sm text-foreground">
                   <span>{stats.points} pts</span>
                   <span className="text-muted">{stats.eligible > 0 ? `${stats.attended}/${stats.eligible}` : `${stats.attended} attended`}</span>
                 </div>
@@ -322,7 +322,7 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
                     ["Retreats", row.retreats],
                   ] as const
                 ).map(([label, stats]) => (
-                  <tr key={label} className="border-b border-line last:border-0">
+                  <tr key={label} className="border-b border-border last:border-0">
                     <td className={tdClass}>{label}</td>
                     <td className={`${tdClass} numeric`}>{stats.points}</td>
                     <td className={`${tdClass} numeric`}>{stats.attended}</td>
@@ -343,7 +343,7 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
           title="No events yet"
           description="Check in at your first event — GBMs count toward the chapter-events category, and E-Board meetings/retreats have their own."
           action={
-            <Link href="/events" className="text-sm font-semibold text-signal underline underline-offset-2">
+            <Link href="/events" className="text-sm font-semibold text-signal-strong underline underline-offset-2">
               Browse events
             </Link>
           }
@@ -356,10 +356,10 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
               const event = eventById.get(historyRow.eventId);
               const points = eboardAwardFor("eboard", historyRow.category, eboardConfig);
               return (
-                <div key={historyRow.id} className="rounded-xl border border-line bg-surface p-3">
+                <div key={historyRow.id} className="rounded-xl border border-border bg-surface p-3">
                   <div className="flex items-start justify-between gap-3">
-                    <p className="text-sm font-medium text-ink">{event?.name ?? historyRow.eventId}</p>
-                    <span className="numeric shrink-0 text-base font-semibold text-ink">+{points}</span>
+                    <p className="text-sm font-medium text-foreground">{event?.name ?? historyRow.eventId}</p>
+                    <span className="numeric shrink-0 text-base font-semibold text-foreground">+{points}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
                     <span>{formatDate(historyRow.timestamp)}</span>
@@ -383,7 +383,7 @@ async function EboardDashboard({ orgId, email }: { orgId: string; email: string 
                   const event = eventById.get(historyRow.eventId);
                   const points = eboardAwardFor("eboard", historyRow.category, eboardConfig);
                   return (
-                    <tr key={historyRow.id} className="border-b border-line last:border-0">
+                    <tr key={historyRow.id} className="border-b border-border last:border-0">
                       <td className={tdClass}>{event?.name ?? historyRow.eventId}</td>
                       <td className={tdClass}>{formatDate(historyRow.timestamp)}</td>
                       <td className={tdClass}>{event?.category.shortName ?? "—"}</td>

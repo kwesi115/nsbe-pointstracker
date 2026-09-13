@@ -1,11 +1,11 @@
 export type BadgeTone = "ink" | "signal" | "amber" | "alert" | "muted";
 
 const TONE: Record<BadgeTone, string> = {
-  ink: "bg-ink text-white",
-  signal: "bg-signal/10 text-signal",
-  amber: "bg-amber/20 text-[#7a4d00]",
+  ink: "bg-inverse text-on-inverse",
+  signal: "bg-signal/10 text-signal-strong",
+  amber: "bg-torch/20 text-torch-strong",
   alert: "bg-alert/10 text-alert",
-  muted: "bg-surface-sunken text-muted",
+  muted: "bg-surface-raised text-muted",
 };
 
 export default function Badge({ tone = "muted", children }: { tone?: BadgeTone; children: React.ReactNode }) {

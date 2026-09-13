@@ -20,10 +20,10 @@ export default async function GroupDetailPage({ params }: { params: Promise<{ id
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-10">
       <div>
-        <Link href="/admin/groups" className="text-sm text-muted hover:text-ink">
+        <Link href="/admin/groups" className="text-sm text-muted hover:text-foreground">
           ← Groups
         </Link>
-        <h1 className="mt-1 font-display text-2xl font-bold text-ink">{group.name}</h1>
+        <h1 className="mt-1 font-display text-2xl font-bold text-foreground">{group.name}</h1>
       </div>
       <GroupDetail group={group} allEvents={allEvents} matrix={matrix} />
     </main>

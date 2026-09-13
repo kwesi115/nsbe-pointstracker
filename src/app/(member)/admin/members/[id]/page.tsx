@@ -76,7 +76,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-10">
       <div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-display text-2xl font-bold text-ink">
+          <h1 className="font-display text-2xl font-bold text-foreground">
             {memberDisplayName(member.firstName, member.lastName, member.email)}
           </h1>
           <Badge tone={eligible ? "signal" : "muted"}>{eligible ? "Eligible" : "Ineligible"}</Badge>
@@ -135,7 +135,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
               href={`/api/files/${member.resumeFileId}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex w-fit items-center gap-1.5 font-medium text-signal underline underline-offset-2"
+              className="inline-flex w-fit items-center gap-1.5 font-medium text-signal-strong underline underline-offset-2"
             >
               <SquareArrowOutUpRight size={14} aria-hidden="true" />
               View resume
@@ -153,23 +153,23 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Insights</h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <p className="text-xs text-muted">Attendance rate</p>
-            <p className="numeric text-xl font-semibold text-ink">
+            <p className="numeric text-xl font-semibold text-foreground">
               {rate.eligible > 0 ? `${rate.attended}/${rate.eligible}` : "—"}
             </p>
           </div>
-          <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <p className="text-xs text-muted">Longest streak</p>
-            <p className="numeric text-xl font-semibold text-ink">{streak}</p>
+            <p className="numeric text-xl font-semibold text-foreground">{streak}</p>
           </div>
-          <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <p className="text-xs text-muted">Days since last attended</p>
-            <p className="numeric text-xl font-semibold text-ink">{daysSinceLastAttended ?? "—"}</p>
+            <p className="numeric text-xl font-semibold text-foreground">{daysSinceLastAttended ?? "—"}</p>
           </div>
-          <div className="rounded-xl border border-line bg-surface p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <p className="text-xs text-muted">Total events</p>
-            <p className="numeric text-xl font-semibold text-ink">{history.length}</p>
+            <p className="numeric text-xl font-semibold text-foreground">{history.length}</p>
           </div>
         </div>
         {chartData.length > 0 ? <PointsChart data={chartData} /> : null}
@@ -182,7 +182,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
             </Thead>
             <tbody>
               {Array.from(categoryBreakdown.entries()).map(([type, stats]) => (
-                <tr key={type} className="border-b border-line last:border-0">
+                <tr key={type} className="border-b border-border last:border-0">
                   <td className={tdClass}>{type}</td>
                   <td className={`${tdClass} numeric`}>{stats.points}</td>
                   <td className={`${tdClass} numeric`}>{stats.events}</td>
@@ -208,7 +208,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
             </Thead>
             <tbody>
               {history.map((row) => (
-                <tr key={row.id} className="border-b border-line last:border-0">
+                <tr key={row.id} className="border-b border-border last:border-0">
                   <td className={tdClass}>{eventById.get(row.eventId)?.name ?? row.eventId}</td>
                   <td className={tdClass}>{formatDate(row.timestamp)}</td>
                   <td className={tdClass}>{eventById.get(row.eventId)?.category.shortName ?? "—"}</td>
@@ -235,7 +235,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
             </Thead>
             <tbody>
               {memberLog.map((entry, i) => (
-                <tr key={i} className="border-b border-line last:border-0">
+                <tr key={i} className="border-b border-border last:border-0">
                   <td className={tdClass}>{formatDateTime(entry.timestamp)}</td>
                   <td className={tdClass}>{entry.actor}</td>
                   <td className={tdClass}>{entry.action}</td>

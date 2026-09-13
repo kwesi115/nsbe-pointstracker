@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 export type StatAccent = "ink" | "signal" | "amber" | "alert";
 
 const ACCENT: Record<StatAccent, string> = {
-  ink: "text-ink",
-  signal: "text-signal",
-  amber: "text-amber",
+  ink: "text-foreground",
+  signal: "text-signal-strong",
+  amber: "text-torch",
   alert: "text-alert",
 };
 
@@ -28,7 +28,7 @@ export default function StatTile({
   size?: "lg" | "md";
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-line bg-surface p-5">
+    <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-5">
       <span className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</span>
       <span
         className={`numeric ${size === "lg" ? "text-4xl" : "text-2xl"} font-semibold leading-none ${ACCENT[accent]}`}

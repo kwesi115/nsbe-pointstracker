@@ -55,7 +55,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={t.id}
             role="status"
             className={`pointer-events-auto flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
-              t.tone === "success" ? "border-line bg-ink text-white" : "border-alert bg-alert text-white"
+              t.tone === "success" ? "border-border bg-inverse text-on-inverse" : "border-alert bg-alert text-on-alert"
             }`}
           >
             {t.tone === "success" ? (
@@ -68,7 +68,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               type="button"
               onClick={() => dismiss(t.id)}
               aria-label="Dismiss"
-              className="shrink-0 rounded p-0.5 hover:bg-white/20"
+              className="shrink-0 rounded p-0.5 hover:bg-current/20"
             >
               <X size={14} />
             </button>

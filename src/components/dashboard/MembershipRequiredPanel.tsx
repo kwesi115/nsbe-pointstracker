@@ -23,15 +23,15 @@ export default function MembershipRequiredPanel({
     .join(" and ");
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-amber bg-amber/10 px-4 py-3">
-      <p className="flex items-center gap-2 text-sm font-semibold text-ink">
-        <AlertTriangle size={16} className="shrink-0 text-amber" aria-hidden="true" />
+    <div className="flex flex-col gap-2 rounded-xl border border-torch bg-torch/10 px-4 py-3">
+      <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <AlertTriangle size={16} className="shrink-0 text-torch" aria-hidden="true" />
         Membership required
       </p>
       <p className="text-sm text-muted">
         Your attendance is being recorded, but points don&apos;t count toward the leaderboard until you report{" "}
         {missing} —{" "}
-        <Link href="/account#membership" className="font-semibold text-signal underline underline-offset-2">
+        <Link href="/account#membership" className="font-semibold text-signal-strong underline underline-offset-2">
           report it now
         </Link>
         .

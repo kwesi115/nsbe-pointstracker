@@ -36,12 +36,12 @@ export default function EboardSettingsForm({
         )}
       </Field>
 
-      <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+      <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
         <input type="checkbox" name="eboardTrackEnabled" defaultChecked={eboardTrackEnabled} className="h-4 w-4" />
         Internal E-Board track enabled
       </label>
 
-      <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+      <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
         <input type="checkbox" name="eboardRequiresMembership" defaultChecked={eboardRequiresMembership} className="h-4 w-4" />
         Require dues/national verification for internal points too
       </label>

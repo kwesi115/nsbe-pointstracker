@@ -11,7 +11,7 @@ export default function HouseDot({ color, className = "" }: { color?: string; cl
   return (
     <span
       aria-hidden="true"
-      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/15 ${className}`}
+      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-swatch-border ${className}`}
       style={{ backgroundColor: color }}
     />
   );

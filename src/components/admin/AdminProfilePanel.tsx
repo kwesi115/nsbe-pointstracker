@@ -90,29 +90,29 @@ export default function AdminProfilePanel({ member, majors }: { member: ProfileM
             <th className={thClass}>Value</th>
           </Thead>
           <tbody>
-            <tr className="border-b border-line">
+            <tr className="border-b border-border">
               <td className={tdClass}>Name</td>
               <td className={tdClass}>
                 {member.firstName} {member.lastName}
               </td>
             </tr>
-            <tr className="border-b border-line">
+            <tr className="border-b border-border">
               <td className={tdClass}>Student ID</td>
               <td className={tdClass}>{member.studentId || "—"}</td>
             </tr>
-            <tr className="border-b border-line">
+            <tr className="border-b border-border">
               <td className={tdClass}>Phone</td>
               <td className={tdClass}>{member.phone || "—"}</td>
             </tr>
-            <tr className="border-b border-line">
+            <tr className="border-b border-border">
               <td className={tdClass}>Personal email</td>
               <td className={tdClass}>{member.personalEmail || "—"}</td>
             </tr>
-            <tr className="border-b border-line">
+            <tr className="border-b border-border">
               <td className={tdClass}>T-shirt size</td>
               <td className={tdClass}>{member.tshirtSize || "—"}</td>
             </tr>
-            <tr className="border-b border-line">
+            <tr className="border-b border-border">
               <td className={tdClass}>Classification</td>
               <td className={tdClass}>{CLASSIFICATION_OPTIONS.find((o) => o.value === member.classification)?.label ?? "—"}</td>
             </tr>

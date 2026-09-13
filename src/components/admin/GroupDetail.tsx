@@ -57,7 +57,7 @@ function EventAssignment({ group, allEvents }: { group: EventGroup; allEvents: E
         const inGroup = groupEventIds.has(e.eventId);
         const inOtherGroup = e.groupId !== null && e.groupId !== group.id;
         return (
-          <label key={e.eventId} className="flex min-h-11 items-center gap-2 text-sm text-ink">
+          <label key={e.eventId} className="flex min-h-11 items-center gap-2 text-sm text-foreground">
             <input
               type="checkbox"
               checked={inGroup}
@@ -143,7 +143,7 @@ export default function GroupDetail({
               .filter((r) => r.attendedEventIds.length > 0)
               .sort((a, b) => b.attendedEventIds.length - a.attendedEventIds.length)
               .map((r) => (
-                <tr key={r.email} className="border-b border-line last:border-0">
+                <tr key={r.email} className="border-b border-border last:border-0">
                   <td className={tdClass}>
                     {r.firstName} {r.lastName}
                   </td>

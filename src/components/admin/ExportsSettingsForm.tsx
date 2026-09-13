@@ -28,7 +28,7 @@ export default function ExportsSettingsForm({ exportsEnabled }: { exportsEnabled
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
-      <label className="flex min-h-11 items-center gap-2 text-sm text-ink">
+      <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
         <input type="checkbox" name="exportsEnabled" defaultChecked={exportsEnabled} className="h-4 w-4" />
         Exports enabled
       </label>

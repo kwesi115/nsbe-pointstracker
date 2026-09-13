@@ -42,7 +42,7 @@ export default async function AdminLeaderboardPage({
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-10">
       <div>
         <div className="flex items-center gap-2">
-          <h1 className="font-display text-2xl font-bold text-ink">E-Board Leaderboard</h1>
+          <h1 className="font-display text-2xl font-bold text-foreground">E-Board Leaderboard</h1>
           <Badge tone="amber">E-Board internal</Badge>
         </div>
         <p className="text-sm text-muted">
@@ -70,14 +70,14 @@ export default async function AdminLeaderboardPage({
             <option value="retreats">Retreats</option>
           </select>
         </label>
-        <button type="submit" className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken">
+        <button type="submit" className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-foreground hover:bg-surface-raised">
           Apply
         </button>
         {/* Same flag that gates the endpoint behind it — see lib/features.ts. */}
         {guard.access.features.exports ? (
           <a
             href="/api/admin/export/eboard-leaderboard/csv"
-            className="ml-auto inline-flex min-h-11 items-center gap-2 rounded-lg border border-line px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            className="ml-auto inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
           >
             <Download size={16} aria-hidden="true" /> Export CSV
           </a>
@@ -85,7 +85,7 @@ export default async function AdminLeaderboardPage({
       </form>
 
       {rows.length === 0 ? (
-        <p className="rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-muted">
+        <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
           No E-Board members match this filter.
         </p>
       ) : (
@@ -102,7 +102,7 @@ export default async function AdminLeaderboardPage({
           </Thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.email} className="border-b border-line last:border-0">
+              <tr key={r.email} className="border-b border-border last:border-0">
                 <td className={`${tdClass} numeric`}>#{r.rank}</td>
                 <td className={tdClass}>
                   {r.firstName} {r.lastName}

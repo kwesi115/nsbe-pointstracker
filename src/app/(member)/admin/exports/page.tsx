@@ -30,7 +30,7 @@ export default async function AdminExportsPage() {
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-6 py-10">
       <div>
-        <h1 className="font-display text-2xl font-bold text-ink">Exports</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Exports</h1>
         <p className="text-sm text-muted">
           Postgres is the source of truth — everything here is generated on demand, not a file anyone edits.
         </p>
@@ -40,10 +40,10 @@ export default async function AdminExportsPage() {
       <div className="flex flex-col gap-4">
         {EXPORTS.map((item) => (
           <Card key={item.href} className="flex flex-col gap-3">
-            <p className="text-sm text-ink">{item.description}</p>
+            <p className="text-sm text-foreground">{item.description}</p>
             <a
               href={item.href}
-              className="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg bg-signal px-4 text-sm font-semibold text-white hover:bg-[#2549c4]"
+              className="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg bg-signal px-4 text-sm font-semibold text-on-signal hover:bg-signal-hover"
             >
               <Download size={16} aria-hidden="true" /> {item.label}
             </a>
@@ -51,15 +51,15 @@ export default async function AdminExportsPage() {
         ))}
 
         <Card className="flex flex-col gap-2">
-          <p className="text-sm text-ink">A single event&apos;s responses (.csv) — from that event&apos;s Responses page.</p>
-          <a href="/admin" className="text-sm font-semibold text-signal underline underline-offset-2 w-fit">
+          <p className="text-sm text-foreground">A single event&apos;s responses (.csv) — from that event&apos;s Responses page.</p>
+          <a href="/admin" className="text-sm font-semibold text-signal-strong underline underline-offset-2 w-fit">
             Go to Events
           </a>
         </Card>
 
         <Card className="flex flex-col gap-3">
           <div>
-            <p className="text-sm font-semibold text-ink">Season snapshots</p>
+            <p className="text-sm font-semibold text-foreground">Season snapshots</p>
             <p className="text-sm text-muted">
               A human-readable full-season backup, stored separately from the nightly database backup — if Postgres is ever
               unrecoverable, this workbook is still a complete record of the season. Created automatically before a bulk
@@ -68,13 +68,13 @@ export default async function AdminExportsPage() {
           </div>
           <CreateSnapshotButton />
           {snapshots.length > 0 ? (
-            <ul className="flex flex-col gap-1.5 border-t border-line pt-3">
+            <ul className="flex flex-col gap-1.5 border-t border-border pt-3">
               {snapshots.map((s) => (
                 <li key={s.key} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-ink">{s.createdAt ? formatDateTime(new Date(s.createdAt)) : s.filename}</span>
+                  <span className="text-foreground">{s.createdAt ? formatDateTime(new Date(s.createdAt)) : s.filename}</span>
                   <a
                     href={`/api/admin/export/snapshot/${s.key.split("/").map(encodeURIComponent).join("/")}`}
-                    className="inline-flex items-center gap-1 font-semibold text-signal underline underline-offset-2"
+                    className="inline-flex items-center gap-1 font-semibold text-signal-strong underline underline-offset-2"
                   >
                     <Download size={14} aria-hidden="true" /> Download
                   </a>

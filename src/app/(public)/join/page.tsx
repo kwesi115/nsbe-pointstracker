@@ -11,7 +11,7 @@ export default async function JoinPage() {
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-6 py-10">
       <div className="text-center">
         <p className="text-sm text-muted">{org?.name ?? "Create your account"}</p>
-        <h1 className="font-display text-2xl font-bold text-ink">Join</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Join</h1>
       </div>
       <JoinWizard config={config} />
     </main>

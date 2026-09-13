@@ -38,15 +38,15 @@ const stickyNameClass = "sticky left-0 z-10 bg-surface";
  */
 function StatusLegend() {
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
+    <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
       <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        <li className="font-semibold text-ink">Dues &amp; National</li>
+        <li className="font-semibold text-foreground">Dues &amp; National</li>
         <li className="flex items-center gap-1.5">
-          <Hand size={14} className="text-[#7a4d00]" aria-hidden="true" />
+          <Hand size={14} className="text-torch-strong" aria-hidden="true" />
           Self-reported, not yet verified
         </li>
         <li className="flex items-center gap-1.5">
-          <Check size={14} className="text-signal" aria-hidden="true" />
+          <Check size={14} className="text-signal-strong" aria-hidden="true" />
           Verified by an admin
         </li>
         <li className="flex items-center gap-1.5">
@@ -59,9 +59,9 @@ function StatusLegend() {
         </li>
       </ul>
       <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        <li className="font-semibold text-ink">Eligible, House &amp; Resume</li>
+        <li className="font-semibold text-foreground">Eligible, House &amp; Resume</li>
         <li className="flex items-center gap-1.5">
-          <Check size={14} className="text-signal" aria-hidden="true" />
+          <Check size={14} className="text-signal-strong" aria-hidden="true" />
           Yes
         </li>
         <li className="flex items-center gap-1.5">
@@ -69,7 +69,7 @@ function StatusLegend() {
           No
         </li>
         <li className="flex items-center gap-1.5">
-          <Clock size={14} className="text-[#7a4d00]" aria-hidden="true" />
+          <Clock size={14} className="text-torch-strong" aria-hidden="true" />
           Pending
         </li>
         <li className="flex items-center gap-1.5">
@@ -183,8 +183,8 @@ export default function MembersTable({
       <StatusLegend />
 
       {selected.size > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2">
-          <p className="text-sm text-ink">{selected.size} selected</p>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+          <p className="text-sm text-foreground">{selected.size} selected</p>
           <div className="ml-auto flex flex-wrap gap-2">
             <Button type="button" variant="secondary" disabled={isPending} onClick={() => runBulk(bulkVerifyDuesAction, "Verified dues")}>
               Verify dues
@@ -217,7 +217,7 @@ export default function MembersTable({
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface">
         <table className="w-full border-collapse text-sm">
           <Thead>
             <th className={`${thClass} ${stickyNameClass} w-10`}>
@@ -247,7 +247,7 @@ export default function MembersTable({
             {members.map((m) => {
               const name = memberDisplayName(m.firstName, m.lastName, m.email);
               return (
-                <tr key={m.email} className="border-b border-line last:border-0">
+                <tr key={m.email} className="border-b border-border last:border-0">
                   <td className={`${tdClass} ${stickyNameClass}`}>
                     <input
                       type="checkbox"
@@ -258,7 +258,7 @@ export default function MembersTable({
                     />
                   </td>
                   <td className={`${tdClass} ${stickyNameClass}`}>
-                    <Link href={`/admin/members/${m.id}`} className="font-medium text-signal underline underline-offset-2">
+                    <Link href={`/admin/members/${m.id}`} className="font-medium text-signal-strong underline underline-offset-2">
                       {name}
                     </Link>
                   </td>
@@ -295,7 +295,7 @@ export default function MembersTable({
                   </td>
                   <td className={tdClass}>
                     {m.resumeFileId ? (
-                      <a href={`/api/files/${m.resumeFileId}`} target="_blank" rel="noopener noreferrer" className="text-signal underline underline-offset-2">
+                      <a href={`/api/files/${m.resumeFileId}`} target="_blank" rel="noopener noreferrer" className="text-signal-strong underline underline-offset-2">
                         View
                       </a>
                     ) : (

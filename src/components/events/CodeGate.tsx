@@ -58,7 +58,7 @@ export default function CodeGate({
       className="flex flex-col gap-4"
     >
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="checkin-code" className="text-sm font-medium text-ink">
+        <label htmlFor="checkin-code" className="text-sm font-medium text-foreground">
           Enter the code on the screen
         </label>
         <input
@@ -80,7 +80,7 @@ export default function CodeGate({
           autoComplete="one-time-code"
           autoFocus
           placeholder="000000"
-          className={`numeric min-h-16 w-full rounded-xl border border-line bg-white px-4 text-center font-display text-3xl font-bold tracking-[0.3em] text-ink placeholder:text-line focus-visible:border-signal disabled:opacity-50`}
+          className={`numeric min-h-16 w-full rounded-xl border border-border bg-input px-4 text-center font-display text-3xl font-bold tracking-[0.3em] text-foreground placeholder:text-placeholder-faint focus-visible:border-signal disabled:opacity-50`}
         />
       </div>
       {error ? (
@@ -94,7 +94,7 @@ export default function CodeGate({
         // scrolling even with the on-screen keyboard eating a third of a
         // small phone's height, but never floats over unrelated page content
         // once this step is past. Desktop has room to spare — static there.
-        <div className="pb-safe-bottom sticky bottom-0 -mx-4 bg-paper px-4 pt-2 md:static md:mx-0 md:bg-transparent md:p-0">
+        <div className="pb-safe-bottom sticky bottom-0 -mx-4 bg-background px-4 pt-2 md:static md:mx-0 md:bg-transparent md:p-0">
           <Button type="submit" disabled={pending || code.length !== 6} className="w-full">
             {pending ? "Checking…" : "Continue"}
           </Button>

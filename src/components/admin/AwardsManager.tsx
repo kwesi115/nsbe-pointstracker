@@ -76,7 +76,7 @@ function AwardsTable({ awards }: { awards: PointAward[] }) {
       </Thead>
       <tbody>
         {awards.map((a) => (
-          <tr key={a.id} className="border-b border-line last:border-0">
+          <tr key={a.id} className="border-b border-border last:border-0">
             <td className={tdClass}>{a.email}</td>
             <td className={tdClass}>{KIND_LABEL[a.kind]}</td>
             <td className={`${tdClass} numeric`}>+{a.points}</td>
@@ -164,13 +164,13 @@ function ChampionCalculator() {
       </div>
 
       {preview ? (
-        <Card className="border-amber bg-amber/10">
+        <Card className="border-torch bg-torch/10">
           {preview.champions.length === 0 ? (
-            <p className="text-sm text-ink">No one qualifies yet (or the month isn&apos;t over).</p>
+            <p className="text-sm text-foreground">No one qualifies yet (or the month isn&apos;t over).</p>
           ) : (
             <>
-              <p className="text-sm font-medium text-ink">Would award +{points} to:</p>
-              <ul className="mt-2 flex flex-col gap-1 text-sm text-ink">
+              <p className="text-sm font-medium text-foreground">Would award +{points} to:</p>
+              <ul className="mt-2 flex flex-col gap-1 text-sm text-foreground">
                 {preview.champions.map((c) => (
                   <li key={c.email}>
                     {c.firstName} {c.lastName} ({c.email}) — {c.count} events

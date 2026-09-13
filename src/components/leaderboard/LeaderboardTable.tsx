@@ -29,7 +29,7 @@ function BreakdownDetail({ breakdown }: { breakdown: PointBreakdown }) {
       {lines.map((l) => (
         <div key={l.label} className="flex items-center gap-1">
           <dt>{l.label}:</dt>
-          <dd className="numeric font-medium text-ink">{l.value}</dd>
+          <dd className="numeric font-medium text-foreground">{l.value}</dd>
         </div>
       ))}
     </dl>
@@ -53,7 +53,7 @@ function Row({
   const top3 = s.rank <= 3;
 
   return (
-    <div className={`rounded-lg border-l-4 ${top3 ? "border-amber" : "border-transparent"} ${highlight ? "bg-signal/5 ring-1 ring-signal/30" : ""}`}>
+    <div className={`rounded-lg border-l-4 ${top3 ? "border-torch" : "border-transparent"} ${highlight ? "bg-signal/5 ring-1 ring-signal/30" : ""}`}>
       <button
         type="button"
         onClick={onToggle}
@@ -62,17 +62,17 @@ function Row({
       >
         <span className="numeric w-7 shrink-0 text-right text-sm font-semibold text-muted">{s.rank}</span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-ink">{displayName(s)}</p>
+          <p className="truncate text-sm font-medium text-foreground">{displayName(s)}</p>
           {/* Event count moves down here, off the primary rank/name/points line — the only three
               things that must fit at 320px (see task: row layout must work at 320px). */}
           <div className="mt-1 flex items-center gap-2">
-            <div className="h-1.5 min-w-0 flex-1 rounded-full bg-surface-sunken">
+            <div className="h-1.5 min-w-0 flex-1 rounded-full bg-surface-raised">
               <div className="h-1.5 rounded-full bg-signal" style={{ width: `${share * 100}%` }} />
             </div>
             <span className="numeric shrink-0 text-xs text-muted">{s.events} ev</span>
           </div>
         </div>
-        <span className="numeric w-12 shrink-0 text-right text-base font-semibold text-ink">{s.points}</span>
+        <span className="numeric w-12 shrink-0 text-right text-base font-semibold text-foreground">{s.points}</span>
       </button>
       {expanded ? <BreakdownDetail breakdown={s.breakdown} /> : null}
     </div>
@@ -118,7 +118,7 @@ export default function LeaderboardTable({
         className={inputClass}
       />
 
-      <div className="flex flex-col gap-1 rounded-xl border border-line bg-surface p-2">
+      <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-2">
         {filtered.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted">No members match &ldquo;{search}&rdquo;.</p>
         ) : (

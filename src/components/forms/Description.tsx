@@ -14,7 +14,7 @@ export default function Description({ text, vars }: { text: string; vars?: Recor
             href={p.href}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 underline underline-offset-2 hover:text-ink"
+            className="inline-flex items-center gap-0.5 underline underline-offset-2 hover:text-foreground"
           >
             {p.text}
             <ExternalLink size={11} aria-hidden="true" className="shrink-0" />

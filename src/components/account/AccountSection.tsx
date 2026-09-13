@@ -45,14 +45,14 @@ export default function AccountSection({ email, season }: { email: string; seaso
         <div className="flex flex-col gap-4">
           <div>
             <p className="text-xs text-muted">Bison email</p>
-            <p className="text-sm text-ink">{email}</p>
+            <p className="text-sm text-foreground">{email}</p>
             <p className="mt-0.5 text-xs text-muted">
               Your Bison email is your login and can&apos;t be changed. Contact an E-Board member if you need it updated.
             </p>
           </div>
           <div>
             <p className="text-xs text-muted">Season</p>
-            <p className="text-sm text-ink">{season || "—"}</p>
+            <p className="text-sm text-foreground">{season || "—"}</p>
           </div>
 
           {!changingPassword ? (
@@ -60,7 +60,7 @@ export default function AccountSection({ email, season }: { email: string; seaso
               Change password
             </Button>
           ) : (
-            <div className="flex flex-col gap-3 border-t border-line pt-4">
+            <div className="flex flex-col gap-3 border-t border-border pt-4">
               <Field label="Current password">
                 {(id) => (
                   <input

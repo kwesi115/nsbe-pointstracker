@@ -83,7 +83,7 @@ export default function ImageLightbox(props: ImageLightboxProps) {
       // Below sm: a full-screen view, matching every other dialog in the app (see
       // ConfirmDialog). Above it, a large inset panel — a screenshot is the
       // content, so it gets nearly the whole viewport either way.
-      className="m-0 h-full max-h-none w-full max-w-none border-0 bg-ink/95 p-0 backdrop:bg-ink/80 sm:inset-4 sm:m-auto sm:h-[calc(100%-2rem)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
+      className="m-0 h-full max-h-none w-full max-w-none border-0 bg-scrim/95 p-0 backdrop:bg-scrim/80 sm:inset-4 sm:m-auto sm:h-[calc(100%-2rem)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
     >
       {/* Keyed on src so a new image — queue paging, or a different member —
           starts fitted, centred and loading again, without an effect that resets
@@ -158,8 +158,8 @@ function LightboxView({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="min-w-0">
-          <p className="font-display text-base font-bold text-white">{title}</p>
-          {subtitle ? <p className="text-sm text-white/70">{subtitle}</p> : null}
+          <p className="font-display text-base font-bold text-on-scrim">{title}</p>
+          {subtitle ? <p className="text-sm text-on-scrim/70">{subtitle}</p> : null}
         </div>
         <div className="flex items-center gap-2">
           {paging ? (
@@ -167,7 +167,7 @@ function LightboxView({
               <IconButton label="Previous" onClick={paging.onPrevious} disabled={!paging.onPrevious}>
                 ‹
               </IconButton>
-              <span className="numeric px-1 text-sm text-white/80" aria-live="polite">
+              <span className="numeric px-1 text-sm text-on-scrim/80" aria-live="polite">
                 {paging.position} of {paging.total}
               </span>
               <IconButton label="Next" onClick={paging.onNext} disabled={!paging.onNext}>
@@ -210,7 +210,7 @@ function LightboxView({
                 transition: dragging ? "none" : "transform 120ms ease-out",
               }}
             />
-            {loadState === "loading" ? <p className="absolute text-sm text-white/70">Loading…</p> : null}
+            {loadState === "loading" ? <p className="absolute text-sm text-on-scrim/70">Loading…</p> : null}
           </>
         )}
       </div>
@@ -225,7 +225,7 @@ function LightboxView({
           <IconButton label="Zoom out" onClick={() => zoomBy(-1)} disabled={zoom <= MIN_ZOOM || loadState !== "loaded"}>
             <Minus size={18} aria-hidden="true" />
           </IconButton>
-          <span className="numeric w-12 text-center text-sm text-white/80" aria-live="polite">
+          <span className="numeric w-12 text-center text-sm text-on-scrim/80" aria-live="polite">
             {Math.round(zoom * 100)}%
           </span>
           <IconButton label="Zoom in" onClick={() => zoomBy(1)} disabled={zoom >= MAX_ZOOM || loadState !== "loaded"}>
@@ -244,7 +244,7 @@ function LightboxView({
             href={src}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-1 inline-flex min-h-11 items-center gap-1.5 px-2 text-sm font-semibold text-white/80 underline underline-offset-2 hover:text-white"
+            className="ml-1 inline-flex min-h-11 items-center gap-1.5 px-2 text-sm font-semibold text-on-scrim/80 underline underline-offset-2 hover:text-on-scrim"
           >
             <SquareArrowOutUpRight size={14} aria-hidden="true" />
             Open in new tab
@@ -275,7 +275,7 @@ function IconButton({
       title={label}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-lg text-white/85 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-lg text-on-scrim/85 hover:bg-on-scrim/10 disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
@@ -291,8 +291,8 @@ function IconButton({
 function FailedState({ src }: { src: string }) {
   return (
     <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-      <p className="font-display text-base font-bold text-white">This image didn&apos;t load</p>
-      <p className="text-sm text-white/70">
+      <p className="font-display text-base font-bold text-on-scrim">This image didn&apos;t load</p>
+      <p className="text-sm text-on-scrim/70">
         The file is on record, so something went wrong fetching it rather than the member skipping the upload. Try
         opening it directly — and if that fails too, ask them to upload it again.
       </p>

@@ -33,9 +33,9 @@ function PlaintextReveal({ plaintext, onDismiss }: { plaintext: string; onDismis
   const [copied, setCopied] = useState(false);
   return (
     <Card className="flex flex-col gap-3 border-signal bg-signal/5">
-      <p className="text-sm font-semibold text-ink">New code — shown once, write it down now:</p>
+      <p className="text-sm font-semibold text-foreground">New code — shown once, write it down now:</p>
       <div className="flex items-center gap-2">
-        <code className="numeric flex-1 rounded-lg border border-line bg-white px-3 py-2 text-lg tracking-widest">
+        <code className="numeric flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-lg tracking-widest">
           {plaintext}
         </code>
         <Button
@@ -102,7 +102,7 @@ function CodeRow({ code, onRotated }: { code: JoinCodeSummary; onRotated: (plain
   const { show } = useToast();
 
   return (
-    <tr className="border-b border-line last:border-0">
+    <tr className="border-b border-border last:border-0">
       <td className={tdClass}>{code.label}</td>
       <td className={tdClass}>
         <Badge tone={code.grantsRole === "admin" ? "alert" : code.grantsRole === "eboard" ? "amber" : "muted"}>

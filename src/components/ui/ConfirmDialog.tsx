@@ -157,10 +157,10 @@ function ConfirmDialogInstance<S extends ConfirmActionState>({
       // sheet instead of a small centered card — easier to hit with a thumb
       // and immune to the "tiny dialog on a huge dark backdrop" look a
       // desktop-sized modal gets on a phone.
-      className="inset-x-0 top-auto bottom-0 m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border border-line bg-surface p-0 backdrop:bg-ink/50 sm:inset-0 sm:m-auto sm:max-h-[85dvh] sm:w-full sm:max-w-sm sm:rounded-xl"
+      className="inset-x-0 top-auto bottom-0 m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto rounded-t-2xl border border-border bg-surface p-0 backdrop:bg-scrim/50 sm:inset-0 sm:m-auto sm:max-h-[85dvh] sm:w-full sm:max-w-sm sm:rounded-xl"
     >
       <form action={formAction} onSubmit={onSubmit} className="pb-safe-bottom flex flex-col gap-3 p-5">
-        <h2 className="font-display text-lg font-bold text-ink">{title}</h2>
+        <h2 className="font-display text-lg font-bold text-foreground">{title}</h2>
         {description ? <div className="text-sm text-muted">{description}</div> : null}
 
         {open ? <input type="hidden" name="requestToken" value={requestToken} /> : null}

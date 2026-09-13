@@ -10,7 +10,7 @@ export default function NotFound() {
         title="Page not found"
         description="That link doesn't lead anywhere — double-check the URL or head back to the dashboard."
         action={
-          <Link href="/dashboard" className="text-sm font-semibold text-signal underline underline-offset-2">
+          <Link href="/dashboard" className="text-sm font-semibold text-signal-strong underline underline-offset-2">
             Go to dashboard
           </Link>
         }

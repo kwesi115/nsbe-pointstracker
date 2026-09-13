@@ -15,20 +15,20 @@ export default async function OrgLandingPage({ params }: { params: Promise<{ slu
           <img src={org.logoUrl} alt="" className="h-20 w-20 rounded-full object-cover" />
         ) : (
           <div
-            className="flex h-20 w-20 items-center justify-center rounded-full text-2xl font-bold text-white"
-            style={{ backgroundColor: org.primaryColor || "var(--color-signal, #2f5fef)" }}
+            className={`flex h-20 w-20 items-center justify-center rounded-full text-2xl font-bold ${org.primaryColor ? "text-on-brand" : "bg-signal text-on-signal"}`}
+            style={org.primaryColor ? { backgroundColor: org.primaryColor } : undefined}
           >
             {org.shortName.slice(0, 2).toUpperCase()}
           </div>
         )}
-        <h1 className="font-display text-2xl font-bold text-ink">{org.name}</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">{org.name}</h1>
       </div>
 
       <div className="flex w-full max-w-xs flex-col gap-3">
         <form action={continueWithOrg.bind(null, org.id, "/signin")}>
           <button
             type="submit"
-            className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-signal px-4 text-sm font-semibold text-white hover:bg-[#2549c4]"
+            className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-signal px-4 text-sm font-semibold text-on-signal hover:bg-signal-hover"
           >
             Sign in
           </button>
@@ -36,7 +36,7 @@ export default async function OrgLandingPage({ params }: { params: Promise<{ slu
         <form action={continueWithOrg.bind(null, org.id, "/join")}>
           <button
             type="submit"
-            className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-border bg-surface px-4 text-sm font-semibold text-foreground hover:bg-surface-raised"
           >
             Create an account
           </button>
@@ -44,7 +44,7 @@ export default async function OrgLandingPage({ params }: { params: Promise<{ slu
         <form action={continueWithOrg.bind(null, org.id, "/guest/join")}>
           <button
             type="submit"
-            className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-4 text-sm font-semibold text-muted hover:text-ink"
+            className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-4 text-sm font-semibold text-muted hover:text-foreground"
           >
             Continue as a guest
           </button>

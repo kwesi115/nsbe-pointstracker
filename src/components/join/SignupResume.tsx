@@ -231,7 +231,7 @@ function FinishLater({ pending }: { pending: boolean }) {
     // signOutAction is the app's one sign-out (it clears the guest pass and
     // lands on the org landing, keeping the org selection) — the exit needs
     // nothing more, because every step has already saved as it completed.
-    <form action={signOutAction} className="flex flex-col items-center gap-1.5 border-t border-line pt-5">
+    <form action={signOutAction} className="flex flex-col items-center gap-1.5 border-t border-border pt-5">
       <Button type="submit" variant="ghost" disabled={pending} className="text-sm">
         Finish this later
       </Button>

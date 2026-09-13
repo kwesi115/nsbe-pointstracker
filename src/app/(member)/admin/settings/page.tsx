@@ -53,7 +53,7 @@ export default async function AdminSettingsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-8 px-6 py-10">
-      <h1 className="font-display text-2xl font-bold text-ink">Settings</h1>
+      <h1 className="font-display text-2xl font-bold text-foreground">Settings</h1>
       <AdminNav active="/admin/settings" access={guard.access} />
 
       <section className="flex flex-col gap-3">
@@ -61,7 +61,7 @@ export default async function AdminSettingsPage() {
         <Card>
           <Link
             href="/admin/join-codes"
-            className="flex items-center gap-3 text-sm font-semibold text-ink hover:text-signal"
+            className="flex items-center gap-3 text-sm font-semibold text-foreground hover:text-signal-strong"
           >
             <KeyRound size={18} aria-hidden="true" />
             Manage role-scoped join codes
@@ -77,18 +77,18 @@ export default async function AdminSettingsPage() {
         <Card>
           <Link
             href="/admin/settings/categories"
-            className="flex items-center gap-3 text-sm font-semibold text-ink hover:text-signal"
+            className="flex items-center gap-3 text-sm font-semibold text-foreground hover:text-signal-strong"
           >
             <Layers size={18} aria-hidden="true" />
             Manage event categories, tiers &amp; point values
           </Link>
           <p className="mt-1 text-sm text-muted">
             Replaces the old flat point system. Also see{" "}
-            <Link href="/admin/groups" className="underline underline-offset-2 hover:text-ink">
+            <Link href="/admin/groups" className="underline underline-offset-2 hover:text-foreground">
               NSBE Week groups
             </Link>{" "}
             and{" "}
-            <Link href="/admin/awards" className="underline underline-offset-2 hover:text-ink">
+            <Link href="/admin/awards" className="underline underline-offset-2 hover:text-foreground">
               bonus awards
             </Link>
             .

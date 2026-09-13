@@ -132,12 +132,12 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            className="relative flex min-h-11 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-surface-sunken"
+            className="relative flex min-h-11 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-foreground hover:bg-surface-raised"
           >
             <SlidersHorizontal size={16} aria-hidden="true" />
             Filters
             {activeCount > 0 ? (
-              <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-signal px-1 text-xs font-bold text-white">
+              <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-signal px-1 text-xs font-bold text-on-signal">
                 {activeCount}
               </span>
             ) : null}
@@ -152,9 +152,9 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
                 type="button"
                 aria-label="Close filters"
                 onClick={() => setOpen(false)}
-                className="fixed inset-0 z-[var(--z-drawer-backdrop)] bg-ink/50 sm:hidden"
+                className="fixed inset-0 z-[var(--z-drawer-backdrop)] bg-scrim/50 sm:hidden"
               />
-              <div className="pb-safe-bottom fixed inset-x-0 bottom-0 z-[var(--z-drawer)] max-h-[85dvh] overflow-y-auto rounded-t-2xl border border-line bg-white p-4 shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:max-h-none sm:w-80 sm:rounded-xl">
+              <div className="pb-safe-bottom fixed inset-x-0 bottom-0 z-[var(--z-drawer)] max-h-[85dvh] overflow-y-auto rounded-t-2xl border border-border bg-surface p-4 shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:bottom-auto sm:z-20 sm:mt-2 sm:max-h-none sm:w-80 sm:rounded-xl">
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1 text-xs font-medium text-muted">
                   Status
@@ -242,7 +242,7 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
                 <button
                   type="button"
                   onClick={() => POPOVER_KEYS.forEach((k) => updateParam(k, "all"))}
-                  className="mt-3 text-xs font-semibold text-signal underline underline-offset-2"
+                  className="mt-3 text-xs font-semibold text-signal-strong underline underline-offset-2"
                 >
                   Clear all filters
                 </button>
@@ -260,7 +260,7 @@ export default function MembersFilterBar({ majors }: { majors: string[] }) {
               key={chip.key}
               type="button"
               onClick={() => updateParam(chip.key, "all")}
-              className="inline-flex items-center gap-1 rounded-full bg-surface-sunken px-2.5 py-1 text-xs font-medium text-ink hover:bg-line"
+              className="inline-flex items-center gap-1 rounded-full bg-surface-raised px-2.5 py-1 text-xs font-medium text-foreground hover:bg-border"
             >
               {labelFor(chip.key, chip.value)}
               <X size={12} aria-hidden="true" />

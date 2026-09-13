@@ -151,7 +151,7 @@ export default function VerificationQueue({
             aria-selected={activeTab === t.id}
             onClick={() => switchTab(t.id)}
             className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold ${
-              activeTab === t.id ? "bg-ink text-white" : "bg-surface text-muted hover:text-ink"
+              activeTab === t.id ? "bg-inverse text-on-inverse" : "bg-surface text-muted hover:text-foreground"
             }`}
           >
             {t.label}
@@ -171,8 +171,8 @@ export default function VerificationQueue({
       </p>
 
       {selected.size > 0 ? (
-        <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2">
-          <p className="text-sm text-ink">{selected.size} selected</p>
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+          <p className="text-sm text-foreground">{selected.size} selected</p>
           <Button type="button" onClick={approveSelected} disabled={isPending} className="ml-auto">
             Approve selected
           </Button>
@@ -180,7 +180,7 @@ export default function VerificationQueue({
       ) : null}
 
       {rows.length === 0 ? (
-        <p className="rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-muted">
+        <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
           Nothing pending here.
         </p>
       ) : (
@@ -208,7 +208,7 @@ export default function VerificationQueue({
           </Thead>
           <tbody>
             {rows.map((m) => (
-              <tr key={m.email} className="border-b border-line last:border-0">
+              <tr key={m.email} className="border-b border-border last:border-0">
                 <td className={tdClass}>
                   <input
                     type="checkbox"

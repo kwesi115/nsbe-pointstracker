@@ -10,6 +10,6 @@ export default function Card({
   padded?: boolean;
 }) {
   return (
-    <div className={`rounded-xl border border-line bg-surface ${padded ? "p-5" : ""} ${className}`}>{children}</div>
+    <div className={`rounded-xl border border-border bg-surface ${padded ? "p-5" : ""} ${className}`}>{children}</div>
   );
 }

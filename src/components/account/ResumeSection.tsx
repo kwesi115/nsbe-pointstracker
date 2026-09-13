@@ -53,7 +53,7 @@ export default function ResumeSection({ member }: { member: ResumeMember }) {
                 href={`/api/files/${member.resumeFileId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm font-medium text-signal underline underline-offset-2"
+                className="text-sm font-medium text-signal-strong underline underline-offset-2"
               >
                 View current resume
               </a>

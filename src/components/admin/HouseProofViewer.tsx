@@ -63,7 +63,7 @@ export function HouseProofThumbnail({
   if (!subject.houseProofFileId) {
     return (
       <div
-        className={`flex ${box} flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line bg-surface-sunken p-2 text-center`}
+        className={`flex ${box} flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-surface-raised p-2 text-center`}
       >
         <ImageOff size={16} className="text-muted" aria-hidden="true" />
         <span className="text-[11px] leading-tight text-muted">No screenshot uploaded</span>
@@ -78,10 +78,10 @@ export function HouseProofThumbnail({
       // The thumbnail is the control, so it says what it does rather than being
       // an image that happens to have a click handler.
       aria-label={`View ${subject.name}'s House test result full size`}
-      className={`group relative ${box} overflow-hidden rounded-lg border border-line transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal`}
+      className={`group relative ${box} overflow-hidden rounded-lg border border-border transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal`}
     >
       {failed ? (
-        <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-surface-sunken p-1 text-center">
+        <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-surface-raised p-1 text-center">
           <ImageOff size={16} className="text-alert" aria-hidden="true" />
           <span className="text-[11px] leading-tight text-muted">Couldn&apos;t load — open it</span>
         </span>
@@ -94,7 +94,7 @@ export function HouseProofThumbnail({
             onError={() => setFailed(true)}
             className="h-full w-full object-cover transition-transform group-hover:scale-105"
           />
-          <span className="absolute inset-x-0 bottom-0 bg-ink/70 py-0.5 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
+          <span className="absolute inset-x-0 bottom-0 bg-scrim/70 py-0.5 text-[10px] font-semibold text-on-scrim opacity-0 transition-opacity group-hover:opacity-100">
             View full size
           </span>
         </>
@@ -145,7 +145,7 @@ export function HouseProofLightbox({
         title={subject.name}
         subtitle={
           <>
-            Claimed <strong className="font-semibold text-white">{subject.house || "no House"}</strong> · {subject.email}
+            Claimed <strong className="font-semibold text-on-scrim">{subject.house || "no House"}</strong> · {subject.email}
           </>
         }
         paging={paging}

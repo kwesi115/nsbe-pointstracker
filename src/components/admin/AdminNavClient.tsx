@@ -49,11 +49,11 @@ export default function AdminNavClient({ links, active }: { links: AdminNavLink[
           aria-label="Open admin menu"
           aria-haspopup="menu"
           aria-expanded={open}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-ink"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-foreground"
         >
           <Menu size={20} aria-hidden="true" />
         </button>
-        <span className="text-sm font-semibold text-ink">{activeLabel}</span>
+        <span className="text-sm font-semibold text-foreground">{activeLabel}</span>
       </div>
 
       {/* Desktop: the original flex-wrap link row, unchanged. */}
@@ -62,8 +62,8 @@ export default function AdminNavClient({ links, active }: { links: AdminNavLink[
           <Link
             key={link.href}
             href={link.href}
-            className={`flex items-center gap-1.5 text-sm underline-offset-2 hover:text-ink ${
-              link.href === active ? "font-semibold text-ink underline" : "text-muted underline"
+            className={`flex items-center gap-1.5 text-sm underline-offset-2 hover:text-foreground ${
+              link.href === active ? "font-semibold text-foreground underline" : "text-muted underline"
             }`}
           >
             {link.label}
@@ -77,7 +77,7 @@ export default function AdminNavClient({ links, active }: { links: AdminNavLink[
             type="button"
             aria-label="Close admin menu"
             onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-ink/50"
+            className="absolute inset-0 bg-scrim/50"
           />
           <div
             ref={drawerRef}
@@ -85,13 +85,13 @@ export default function AdminNavClient({ links, active }: { links: AdminNavLink[
             aria-label="Admin sections"
             className="pb-safe-bottom pt-safe-top absolute inset-y-0 left-0 z-[var(--z-drawer)] flex w-[85vw] max-w-xs flex-col overflow-y-auto bg-surface shadow-xl"
           >
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <span className="font-display text-sm font-bold text-ink">Admin</span>
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <span className="font-display text-sm font-bold text-foreground">Admin</span>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Close admin menu"
-                className="flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:bg-surface-sunken"
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-muted hover:bg-surface-raised"
               >
                 <X size={20} aria-hidden="true" />
               </button>
@@ -104,7 +104,7 @@ export default function AdminNavClient({ links, active }: { links: AdminNavLink[
                   role="menuitem"
                   onClick={() => setOpen(false)}
                   className={`flex min-h-11 items-center rounded-lg px-3 text-sm font-medium ${
-                    link.href === active ? "bg-signal/10 text-signal" : "text-ink hover:bg-surface-sunken"
+                    link.href === active ? "bg-signal/10 text-signal-strong" : "text-foreground hover:bg-surface-raised"
                   }`}
                 >
                   {link.label}
