@@ -24,7 +24,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NSBE Points Tracker",
+  title: "NSBE Membership Portal",
   description: "Chapter attendance and points tracking for NSBE.",
 };
 
