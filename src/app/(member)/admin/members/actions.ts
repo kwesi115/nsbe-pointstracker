@@ -3,15 +3,18 @@
 import { revalidatePath } from "next/cache";
 import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
+import { clearRateLimit } from "@/lib/rate-limit";
 import {
   approveMember,
   commitBulkImport,
   correctHouse,
   createMemberAccount,
   grantPermission,
+  isLoginEmailAllowed,
   previewBulkImport,
   rejectMember,
   resetPassword,
+  revealSetupCode,
   revokePermission,
   setEboardPosition,
   setMemberRole,
@@ -25,9 +28,23 @@ import {
 import { requireAdmin } from "@/lib/session";
 import type { PermissionName, Role } from "@/lib/types";
 
+/** A setup code on its way to the admin's screen. */
+export interface IssuedCodeResult {
+  email: string;
+  setupCode: string;
+  /** A reset issued moments ago, returned again instead of replaced — see lib/repo.ts resetPassword. */
+  reused?: boolean;
+  /**
+   * This email can't get past the sign-in domain gate (Config.ALLOWED_EMAIL_DOMAIN
+   * / ADMIN_EMAIL_ALLOWLIST), so the code will be rejected however it's typed.
+   * This is what made codes "not work for some members" — say so up front.
+   */
+  loginBlocked?: boolean;
+}
+
 export interface CreateMemberState {
   error: string | null;
-  result: { email: string; setupCode: string } | null;
+  result: IssuedCodeResult | null;
 }
 
 export async function createMemberAction(
@@ -47,9 +64,10 @@ export async function createMemberAction(
 
   try {
     const { setupCode } = await createMemberAccount(session.user.orgId, email, firstName, lastName, role, session.user.email);
+    const loginBlocked = !(await isLoginEmailAllowed(session.user.orgId, email));
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
-    return { error: null, result: { email, setupCode } };
+    return { error: null, result: { email, setupCode, loginBlocked } };
   } catch (err) {
     if (err instanceof AppError) {
       return { error: err.message, result: null };
@@ -60,7 +78,7 @@ export async function createMemberAction(
 
 export interface ResetPasswordState {
   error: string | null;
-  result: { email: string; setupCode: string } | null;
+  result: IssuedCodeResult | null;
 }
 
 export async function resetPasswordAction(
@@ -69,17 +87,55 @@ export async function resetPasswordAction(
 ): Promise<ResetPasswordState> {
   const session = await requireAdmin();
   const email = normalizeEmail(String(formData.get("email") ?? ""));
-  // Minted per confirm-dialog opening (components/ui/ConfirmDialog.tsx). Two
-  // submissions of one confirmation carry the same token, and lib/repo.ts
-  // resetPassword issues ONE code for them — so the admin is never shown a
-  // setup code that a second request has already invalidated.
-  const requestToken = String(formData.get("requestToken") ?? "") || undefined;
+  if (!email) return { error: "Missing member email.", result: null };
 
   try {
-    const setupCode = await resetPassword(session.user.orgId, email, session.user.email, { requestToken });
+    // No precondition on the account's state, and no request token: a reset
+    // is always allowed, and lib/repo.ts resetPassword collapses a double
+    // submit by itself (returning the same code, not an error).
+    const { setupCode, reused } = await resetPassword(session.user.orgId, email, session.user.email);
+    // A member who burned their attempts on a dead code must not then be locked
+    // out of the new one for 15 minutes. The limiter is in-process
+    // (lib/rate-limit.ts), so this clears this instance's counter — best effort.
+    clearRateLimit(email);
+    const loginBlocked = !(await isLoginEmailAllowed(session.user.orgId, email));
     revalidatePath("/admin/members");
     revalidatePath("/admin/members/[id]", "page");
-    return { error: null, result: { email, setupCode } };
+    return { error: null, result: { email, setupCode, reused, loginBlocked } };
+  } catch (err) {
+    if (err instanceof AppError) {
+      return { error: err.message, result: null };
+    }
+    throw err;
+  }
+}
+
+export interface ResendSetupCodeState {
+  error: string | null;
+  result: IssuedCodeResult | null;
+}
+
+/** "Resend code" — the member's CURRENT code, shown again. Generates nothing and invalidates nothing. */
+export async function resendSetupCodeAction(
+  _prevState: ResendSetupCodeState,
+  formData: FormData,
+): Promise<ResendSetupCodeState> {
+  const session = await requireAdmin();
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
+  if (!email) return { error: "Missing member email.", result: null };
+
+  try {
+    const current = await revealSetupCode(session.user.orgId, email, session.user.email);
+    if (!current) {
+      return {
+        error:
+          "No code to show — this member has already chosen a password, or their code was issued before codes could be shown again. Reset their password to issue one.",
+        result: null,
+      };
+    }
+    const loginBlocked = !(await isLoginEmailAllowed(session.user.orgId, email));
+    revalidatePath("/admin/members/[id]", "page");
+    return { error: null, result: { email, setupCode: current.setupCode, loginBlocked } };
   } catch (err) {
     if (err instanceof AppError) {
       return { error: err.message, result: null };

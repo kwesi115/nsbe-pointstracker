@@ -137,15 +137,15 @@ export interface UploadedFile {
  * The credential-bearing half of a User row. Only repo.getAuthRecord()
  * returns this — never mix it into Member/getMembers()/getMember(), and
  * never let it reach a response body, a session, or the admin export.
- * passwordHash is always set: self-service signup hashes the chosen password
- * immediately, and admin-provisioned accounts get a bcrypt hash of a random
- * setup code instead of a separate plaintext setup-code column — see
- * repo.createMemberAccount.
+ * At most one of passwordHash / setupCode is set (a database CHECK enforces
+ * it) — see prisma/schema.prisma model User and lib/credentials.ts.
  */
 export interface AuthRecord {
   email: string;
-  /** Null for a GUEST row created by registerGuest() — see lib/auth.ts authorize(), which rejects that regardless of what's submitted. */
+  /** Null while a setup code is pending, and for a GUEST row created by registerGuest(). */
   passwordHash: string | null;
+  /** The pending setup code, SEALED (lib/setup-code.ts) — never plaintext. Null once a real password is set. */
+  setupCode: string | null;
   role: Role;
   mustChangePassword: boolean;
   status: UserStatus;
@@ -161,6 +161,42 @@ export interface AuthRecord {
    * already reads on every auth() call, so the gate costs no extra query.
    */
   signupComplete: boolean;
+}
+
+/**
+ * What a session needs, and nothing else.
+ *
+ * DELIBERATELY NOT AuthRecord. The session callback used to call
+ * repo.getAuthRecord() for two non-credential flags (mustChangePassword and
+ * the signup verdict) that happened to live only on that record — and paid
+ * for them by selecting the whole User row, passwordHash and setupCode
+ * included. That coupling is what turned an unrelated column being absent
+ * from the database into a total auth outage: every auth() call runs the
+ * session callback, so a SELECT that named a missing column threw on every
+ * page, the public sign-in page among them.
+ *
+ * This record is the fix. repo.getSessionUser() names its columns explicitly,
+ * so the session query can only ever break on a column the session actually
+ * uses, and no credential material is in reach of the session path at all.
+ * AuthRecord stays what it always was: the credentials authorize() path only.
+ */
+export interface SessionUser {
+  id: string;
+  email: string;
+  role: Role;
+  status: UserStatus;
+  orgId: string;
+  mustChangePassword: boolean;
+  /**
+   * The signup LATCH, raw. Null means mid-signup.
+   *
+   * The raw column rather than signupIsComplete's verdict, because the
+   * verdict needs the whole profile and this query deliberately reads seven
+   * columns. The two consumers stay in agreement anyway — see
+   * (public)/join/resume/page.tsx, which latches a row the predicate already
+   * considers finished instead of bouncing it back.
+   */
+  signupCompletedAt: Date | null;
 }
 
 export interface Org {

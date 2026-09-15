@@ -3,18 +3,18 @@
  * DATABASE_URL (see vitest.setup.ts).
  *
  * A disabled confirm button is a UX affordance, not a guarantee — a slow
- * network and an impatient admin still produce two requests. For the two admin
- * actions that GENERATE A CREDENTIAL that is not cosmetic:
+ * network and an impatient admin still produce two requests. Rotate join code
+ * GENERATES A CREDENTIAL, so a second fire invalidates the chapter-wide signup
+ * code the admin is currently reading off the screen.
  *
- *   - reset password regenerates a setup code, so a second fire invalidates the
- *     code the admin is currently reading off the screen;
- *   - rotate join code does the same to a chapter-wide signup code.
+ * It claims the client's requestToken in the same transaction as its work (see
+ * lib/repo.ts claimRequestToken and model RequestClaim), so the unique index is
+ * what makes the second one impossible rather than unlikely. These tests fire
+ * the two requests CONCURRENTLY, which is the case a "was there a recent one?"
+ * SELECT would not survive.
  *
- * Both now claim the client's requestToken in the same transaction as their
- * work (see lib/repo.ts claimRequestToken and model RequestClaim), so the
- * unique index is what makes the second one impossible rather than unlikely.
- * These tests fire the two requests CONCURRENTLY, which is the case a
- * "was there a recent one?" SELECT would not survive.
+ * Password reset collapses repeats per member instead — see
+ * lib/reset-password.test.ts.
  */
 
 import { randomUUID } from "node:crypto";
@@ -22,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppError } from "./errors";
 import { verifyPassword } from "./passwords";
 import { prisma } from "./prisma";
-import { createJoinCode, resetPassword, rotateJoinCodeById } from "./repo";
+import { createJoinCode, rotateJoinCodeById } from "./repo";
 import { Role } from "@/generated/prisma/enums";
 
 vi.mock("next/cache", () => ({ revalidateTag: vi.fn() }));
@@ -49,101 +49,12 @@ afterAll(async () => {
   await prisma.org.delete({ where: { id: orgId } });
 });
 
-async function makeMember(): Promise<string> {
-  const email = `member-${randomUUID()}@bison.howard.edu`;
-  await prisma.user.create({
-    data: { orgId, email, firstName: "Grace", lastName: "Hopper", role: Role.GENERAL, passwordHash: "x" },
-  });
-  return email;
-}
-
 function settledErrors(results: PromiseSettledResult<unknown>[]): AppError[] {
   return results
     .filter((r): r is PromiseRejectedResult => r.status === "rejected")
     .map((r) => r.reason)
     .filter((e): e is AppError => e instanceof AppError);
 }
-
-describe("two rapid reset-password requests produce one setup code", () => {
-  it("fired concurrently with the same token: one code issued, one reset logged", async () => {
-    const email = await makeMember();
-    const requestToken = randomUUID();
-
-    const results = await Promise.allSettled([
-      resetPassword(orgId, email, adminEmail, { requestToken }),
-      resetPassword(orgId, email, adminEmail, { requestToken }),
-    ]);
-
-    const codes = results.filter((r) => r.status === "fulfilled").map((r) => r.value as string);
-    expect(codes).toHaveLength(1);
-
-    const errors = settledErrors(results);
-    expect(errors).toHaveLength(1);
-    expect(errors[0].code).toBe("DUPLICATE_REQUEST");
-
-    // The one code that came back is the one the member can actually sign in
-    // with — the loser wrote no passwordHash at all.
-    const row = await prisma.user.findFirstOrThrow({ where: { orgId, email } });
-    expect(await verifyPassword(codes[0], row.passwordHash!)).toBe(true);
-    expect(row.mustChangePassword).toBe(true);
-
-    // And the audit trail says one reset, not two.
-    const logged = await prisma.adminLog.count({ where: { orgId, action: "reset_password", target: email } });
-    expect(logged).toBe(1);
-    expect(await prisma.requestClaim.count({ where: { orgId, scope: "reset_password", token: requestToken } })).toBe(1);
-  });
-
-  it("a repeat that arrives after the first has finished is refused too", async () => {
-    const email = await makeMember();
-    const requestToken = randomUUID();
-
-    const code = await resetPassword(orgId, email, adminEmail, { requestToken });
-    await expect(resetPassword(orgId, email, adminEmail, { requestToken })).rejects.toMatchObject({
-      code: "DUPLICATE_REQUEST",
-    });
-
-    // Still the first code: the repeat did not touch the password.
-    const row = await prisma.user.findFirstOrThrow({ where: { orgId, email } });
-    expect(await verifyPassword(code, row.passwordHash!)).toBe(true);
-  });
-
-  it("a deliberate second reset — a new confirmation, a new token — is allowed", async () => {
-    const email = await makeMember();
-
-    const first = await resetPassword(orgId, email, adminEmail, { requestToken: randomUUID() });
-    const second = await resetPassword(orgId, email, adminEmail, { requestToken: randomUUID() });
-
-    expect(second).not.toBe(first);
-    const row = await prisma.user.findFirstOrThrow({ where: { orgId, email } });
-    expect(await verifyPassword(second, row.passwordHash!)).toBe(true);
-    expect(await verifyPassword(first, row.passwordHash!)).toBe(false);
-  });
-
-  it("a failed reset leaves no claim behind, so the retry works", async () => {
-    const requestToken = randomUUID();
-    // Nobody by this address: the transaction rolls back, claim included.
-    await expect(
-      resetPassword(orgId, `ghost-${randomUUID()}@bison.howard.edu`, adminEmail, { requestToken }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
-    expect(await prisma.requestClaim.count({ where: { orgId, token: requestToken } })).toBe(0);
-
-    const email = await makeMember();
-    await expect(resetPassword(orgId, email, adminEmail, { requestToken })).resolves.toBeTruthy();
-  });
-
-  it("the same token against a DIFFERENT member is still collapsed — one confirmation, one action", async () => {
-    // The token identifies one intent, not one row. Two members cannot be
-    // reset by one confirmation, so the second is refused.
-    const requestToken = randomUUID();
-    const first = await makeMember();
-    const second = await makeMember();
-
-    await expect(resetPassword(orgId, first, adminEmail, { requestToken })).resolves.toBeTruthy();
-    await expect(resetPassword(orgId, second, adminEmail, { requestToken })).rejects.toMatchObject({
-      code: "DUPLICATE_REQUEST",
-    });
-  });
-});
 
 describe("two rapid rotate-join-code requests produce one rotation", () => {
   async function makeCode(): Promise<string> {

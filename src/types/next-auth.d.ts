@@ -5,6 +5,8 @@ import type { Role, UserStatus } from "@/lib/types";
 declare module "next-auth" {
   interface Session {
     user: {
+      /** The User row's cuid. Read straight from the row the session callback already selects, so a caller needing a foreign key doesn't have to re-resolve the email. */
+      id: string;
       /** Always the normalized (lowercased) email — never null/undefined once signed in. */
       email: string;
       /** Re-read from the roster on every session check — see auth.ts session callback. */

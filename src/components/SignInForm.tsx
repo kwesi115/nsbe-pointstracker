@@ -30,7 +30,7 @@ export default function SignInForm({ callbackUrl, defaultEmail }: { callbackUrl:
         )}
       </Field>
 
-      <Field label="Password">
+      <Field label="Password" help="Got a setup code from an officer? Enter it here.">
         {(id, describedBy) => (
           <input
             id={id}
@@ -38,6 +38,9 @@ export default function SignInForm({ callbackUrl, defaultEmail }: { callbackUrl:
             name="password"
             required
             autoComplete="current-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             aria-describedby={describedBy}
             className={inputClass}
           />

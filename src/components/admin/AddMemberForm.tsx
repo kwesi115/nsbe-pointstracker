@@ -50,7 +50,14 @@ export default function AddMemberForm() {
           {state.error}
         </p>
       ) : null}
-      {state.result ? <CopySetupCode email={state.result.email} setupCode={state.result.setupCode} /> : null}
+      {state.result ? (
+        <CopySetupCode
+          email={state.result.email}
+          setupCode={state.result.setupCode}
+          loginBlocked={state.result.loginBlocked}
+          note="You can show this code again from the member's page until they choose a password."
+        />
+      ) : null}
     </div>
   );
 }

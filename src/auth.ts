@@ -1,12 +1,13 @@
-import NextAuth, { CredentialsSignin } from "next-auth";
+import NextAuth, { CredentialsSignin, type Session } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { cookies } from "next/headers";
 import { normalizeEmail } from "@/lib/email";
 import { AppError } from "@/lib/errors";
 import { GUEST_PASS_COOKIE } from "@/lib/guest-pass";
+import { checkCredentials } from "@/lib/credentials";
 import { verifyPassword } from "@/lib/passwords";
 import { assertNotRateLimited, clearRateLimit, recordFailedAttempt } from "@/lib/rate-limit";
-import { getAuthRecord, getMember, getRole, isLoginEmailAllowed } from "@/lib/repo";
+import { getAuthRecord, getMember, getSessionUser, isLoginEmailAllowed } from "@/lib/repo";
 
 /**
  * Thrown instead of a plain AppError so the message survives the trip through
@@ -17,6 +18,25 @@ import { getAuthRecord, getMember, getRole, isLoginEmailAllowed } from "@/lib/re
  */
 class TooManyAttemptsSignin extends CredentialsSignin {
   code = "too-many-attempts";
+}
+
+/**
+ * The session auth() hands back when there is nobody to hand back: no usable
+ * identity in the token, no matching row, or a database error while looking
+ * one up. Every guard reads it as signed out — lib/session.ts requireSession()
+ * throws UNAUTHENTICATED, (member)/layout.tsx redirects to /signin, and
+ * (public)/layout.tsx renders the sign-in page instead of bouncing to /events.
+ *
+ * `user: undefined` is EXPLICIT, and that is load-bearing rather than
+ * stylistic. next-auth's server-side wrapper around this callback returns
+ * `{ user: token, ...whatOurCallbackReturned }` (see
+ * node_modules/next-auth/lib/index.js getSession) — so omitting the key, or
+ * returning null, hands the caller the raw JWT as the session user. That is
+ * failing OPEN, with a role and an orgId, on exactly the database error this
+ * function exists to survive. Naming the key lets our value win the spread.
+ */
+function signedOutSession(session: Session): Session {
+  return { ...session, user: undefined } as unknown as Session;
 }
 
 function clientIp(request: Request): string {
@@ -82,23 +102,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        // A GUEST row (from registerGuest — see lib/repo.ts) has no password
-        // at all: passwordHash is null, not merely unguessable. Reject
-        // outright, before ever touching bcrypt, regardless of what was
-        // submitted — a guest must never be able to sign in (Part 5). Still
-        // pay the dummy-compare cost so this branch takes the same time as a
-        // real failed check.
-        if (authRecord.role === "guest" || authRecord.passwordHash === null) {
-          await verifyPassword(password, undefined);
-          recordFailedAttempt(email, ip);
-          return null;
-        }
-
         const name = [member?.firstName, member?.lastName].filter(Boolean).join(" ") || email;
         const role = member?.role ?? "general";
 
-        const ok = await verifyPassword(password, authRecord.passwordHash);
-        if (!ok) {
+        // Guest rows (never), pending setup codes (forgiving about case,
+        // spaces and hyphens), legacy codes and real passwords — see
+        // lib/credentials.ts. Every failing branch there pays the same bcrypt
+        // cost, so the response time doesn't reveal which kind of account it is.
+        const check = await checkCredentials(authRecord, password);
+        if (!check.ok) {
           recordFailedAttempt(email, ip);
           return null;
         }
@@ -108,7 +120,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           name,
           role,
           orgId,
-          mustChangePassword: authRecord.mustChangePassword,
+          mustChangePassword: check.mustChangePassword,
           status: authRecord.status,
         };
       },
@@ -140,39 +152,81 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
 
+    /**
+     * Runs on EVERY auth() call — every layout, page, Server Action and route
+     * handler in the app. That is why it reads as narrowly as it possibly can,
+     * and why it cannot be allowed to throw.
+     *
+     * It used to call repo.getAuthRecord(). The reason was mundane: it needed
+     * mustChangePassword and the signup verdict, and AuthRecord was the only
+     * getter that carried them (Member carries role and status, but not
+     * mustChangePassword). getAuthRecord is a bare findUnique, so it selects
+     * EVERY column of User — including passwordHash and setupCode, neither of
+     * which a session has any business touching. When setupCode existed in the
+     * Prisma model but not in the database, that SELECT failed, and because
+     * this callback runs everywhere, it took down every page — the public
+     * sign-in page included, leaving no way back in.
+     *
+     * Now it calls repo.getSessionUser(), which names its seven columns, and
+     * getAuthRecord is what its own doc comment always said it was: the
+     * credentials authorize() path only, where a password actually gets
+     * checked. Two queries became one, as a side effect.
+     */
     async session({ session, token }) {
       const email = typeof token.email === "string" ? token.email : "";
       const orgId = typeof token.orgId === "string" ? token.orgId : "";
-      session.user.email = email;
-      session.user.orgId = orgId;
-      if (!email || !orgId) {
-        session.user.role = "general";
-        session.user.mustChangePassword = false;
-        session.user.status = "pending";
-        // No identity to look up, so nothing to complete — the member layout's
-        // own requireSession() rejects this session before the gate is reached.
-        session.user.signupComplete = true;
-        return session;
+      // Nothing to look up. Previously this returned a session carrying an
+      // empty email and default fields, which requireSession() rejects but
+      // (public)/layout.tsx reads as signed in — a token in this state would
+      // have volleyed between /signin and /events. Signed out is the honest
+      // answer and the only one both guards agree on.
+      if (!email || !orgId) return signedOutSession(session);
+
+      let record;
+      try {
+        // Re-read role/status/mustChangePassword on every session check, same
+        // reasoning as before — a JWT minted before a promotion, a password
+        // set, or an approval still looks stale until it's re-issued.
+        record = await getSessionUser(orgId, email);
+      } catch (err) {
+        // A DEGRADE, NOT A CRASH. Throwing from here propagates out of auth()
+        // into whichever layout called it, and (public)/layout.tsx is one of
+        // them — so a database hiccup would take down the very page that
+        // renders the sign-in form, locking everyone out with a 500 instead of
+        // a login box. Signing the request out keeps /signin reachable, and
+        // the next successful call signs the user straight back in: the JWT
+        // cookie is untouched, only this request's view of it is.
+        console.error(
+          `[auth] session lookup failed for ${email} in org ${orgId}; degrading to a signed-out session`,
+          err,
+        );
+        return signedOutSession(session);
       }
-      // Re-read role/mustChangePassword/status on every session check, same
-      // reasoning as before — a JWT minted before a promotion, a password
-      // set, or an approval still looks stale until it's re-issued.
-      const [role, authRecord] = await Promise.all([getRole(orgId, email), getAuthRecord(orgId, email)]);
-      session.user.role = role;
-      session.user.mustChangePassword = authRecord?.mustChangePassword ?? false;
-      session.user.status = authRecord?.status ?? "pending";
-      // Same live-read reasoning, and for this flag it is load-bearing rather
-      // than merely tidy: (member)/layout.tsx redirects a mid-signup account to
-      // /join/resume, and /join/resume redirects a finished one back out. A
-      // value that could lag behind the database would make those two guards
-      // disagree, which is precisely a redirect loop. Reading it here — from the
-      // record getAuthRecord already fetched, so at no extra cost — means both
-      // guards decide from the same fresh row, through the same predicate
-      // (lib/signup.ts signupIsComplete — see AuthRecord.signupComplete for why
-      // it is the verdict and not the column). An absent record reads as
-      // complete: an account that no longer exists must not be herded into a
-      // signup flow.
-      session.user.signupComplete = authRecord?.signupComplete ?? true;
+
+      // The row is gone (deleted, or moved to another org). An account that no
+      // longer exists is not a session.
+      if (!record) return signedOutSession(session);
+
+      session.user.id = record.id;
+      session.user.email = record.email;
+      session.user.orgId = record.orgId;
+      session.user.role = record.role;
+      session.user.status = record.status;
+      session.user.mustChangePassword = record.mustChangePassword;
+      // The LATCH, read live — (member)/layout.tsx redirects a mid-signup
+      // account to /join/resume and /join/resume redirects a finished one back
+      // out, so a value that could lag behind the database is precisely a
+      // redirect loop.
+      //
+      // The column, not lib/signup.ts signupIsComplete's verdict: the verdict
+      // needs the whole profile, and reading the whole profile here is the
+      // coupling this change exists to remove. The pair still cannot disagree,
+      // because /join/resume closes the one gap between them — a row the
+      // predicate considers finished but that carries no latch gets latched
+      // there and sent on, rather than bounced back (see that page). So the
+      // latch is the single source of truth for the gate, and every row the
+      // old code would have called complete still ends up complete, once.
+      session.user.signupComplete = record.signupCompletedAt !== null;
       return session;
     },
   },

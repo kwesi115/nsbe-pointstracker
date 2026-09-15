@@ -58,6 +58,7 @@ import { validateAnswers, serializeAnswers } from "./forms";
 import { memberDisplayName } from "./format";
 import { parseHouses, type House } from "./houses";
 import { generateSetupCode, hashPassword, verifyPassword } from "./passwords";
+import { openSetupCode, sealSetupCode } from "./setup-code";
 import { hashIp, isEventCodeLocked, recordEventCodeFailure } from "./rate-limit";
 import {
   computeEboardStandings,
@@ -105,6 +106,7 @@ import type {
   PointAward,
   PointBreakdown,
   Role,
+  SessionUser,
   ShirtSize,
   Standing,
   UploadedFile,
@@ -338,6 +340,7 @@ function userToAuthRecord(u: UserModel): AuthRecord {
     email: u.email,
     passwordHash: u.passwordHash,
     role: roleFromDb(u.role),
+    setupCode: u.setupCode,
     mustChangePassword: u.mustChangePassword,
     status: statusFromDb(u.status),
     // The verdict, computed once here from the whole row — see AuthRecord.
@@ -739,6 +742,49 @@ export async function getUserId(orgId: string, email: string): Promise<string | 
   const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { id: true } });
   return user?.id ?? null;
+}
+
+/**
+ * Everything the NextAuth session callback re-reads on every auth() call, and
+ * NOTHING else — see types.ts SessionUser for why this exists separately from
+ * getAuthRecord.
+ *
+ * The explicit `select` is the load-bearing part, not a micro-optimization.
+ * getAuthRecord's bare findUnique selects every column of User, so it breaks
+ * whenever ANY column in the model is missing from the database; running that
+ * in the session callback meant an unrelated migration gap (setupCode) logged
+ * every user out of every page, including the public layout that renders
+ * /signin. Naming seven columns means the session can only be broken by a
+ * column the session itself depends on.
+ *
+ * Keep this list in step with types/next-auth.d.ts Session["user"]. Adding a
+ * column here is adding a column the whole app's authentication depends on:
+ * it needs a committed migration before it is deployed.
+ */
+export async function getSessionUser(orgId: string, email: string): Promise<SessionUser | null> {
+  const e = normalizeEmail(email);
+  const user = await prisma.user.findUnique({
+    where: { orgId_email: { orgId, email: e } },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      status: true,
+      orgId: true,
+      mustChangePassword: true,
+      signupCompletedAt: true,
+    },
+  });
+  if (!user) return null;
+  return {
+    id: user.id,
+    email: user.email,
+    role: roleFromDb(user.role),
+    status: statusFromDb(user.status),
+    orgId: user.orgId,
+    mustChangePassword: user.mustChangePassword,
+    signupCompletedAt: user.signupCompletedAt,
+  };
 }
 
 /**
@@ -3407,17 +3453,16 @@ export async function rejectMember(orgId: string, email: string, actor: string):
 
 export interface CreateMemberAccountResult {
   member: Member;
-  /** Shown to the caller exactly once — never re-derivable after this. */
+  /** Plaintext, for the admin's screen. An admin can show it again later with "Resend code" (revealSetupCode) until the member sets a password. */
   setupCode: string;
 }
 
 /**
- * E-Board/Admin provisioning for someone whose self-signup is broken. Sets a
- * bcrypt hash of a random setup code as passwordHash (mustChangePassword =
- * true) — there is no separate plaintext setup-code column; a setup-code
- * login is just a normal bcrypt compare against this hash, same as any other
- * sign-in. Status is ACTIVE immediately: an officer-created account is
- * already vouched for, unlike a self-signup awaiting approval.
+ * E-Board/Admin provisioning for someone whose self-signup is broken. The
+ * account starts pending: passwordHash null, a sealed setup code in setupCode,
+ * mustChangePassword true (see lib/setup-code.ts, lib/credentials.ts). Status
+ * is ACTIVE immediately: an officer-created account is already vouched for,
+ * unlike a self-signup awaiting approval.
  */
 export async function createMemberAccount(
   orgId: string,
@@ -3429,7 +3474,6 @@ export async function createMemberAccount(
 ): Promise<CreateMemberAccountResult> {
   const e = normalizeEmail(email);
   const setupCode = generateSetupCode();
-  const passwordHash = await hashPassword(setupCode);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -3437,7 +3481,10 @@ export async function createMemberAccount(
         data: {
           orgId,
           email: e,
-          passwordHash,
+          passwordHash: null,
+          setupCode: sealSetupCode(setupCode),
+          setupCodeIssuedAt: new Date(),
+          setupCodeIssuedById: await userIdFor(tx, orgId, actor),
           firstName,
           lastName,
           role: roleToDb(role),
@@ -3465,7 +3512,9 @@ export async function setPassword(orgId: string, email: string, plain: string): 
   try {
     await prisma.user.update({
       where: { orgId_email: { orgId, email: e } },
-      data: { passwordHash: hash, mustChangePassword: false },
+      // The setup code goes in the same write: a real password and a live
+      // code must never coexist (User_single_credential_check).
+      data: { passwordHash: hash, mustChangePassword: false, setupCode: null, setupCodeIssuedAt: null, setupCodeIssuedById: null },
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
@@ -3480,15 +3529,19 @@ export async function setPassword(orgId: string, email: string, plain: string): 
 //
 // A disabled confirm button is a UX affordance, not a guarantee: a slow
 // network plus an impatient admin still produces two requests. For an action
-// that GENERATES A CREDENTIAL that is not a cosmetic problem — the second
-// reset silently invalidates the setup code the first one just put on screen,
-// and the admin hands out a code that no longer works.
+// that GENERATES A CREDENTIAL that is not a cosmetic problem — a second
+// rotation silently invalidates the join code the first one just put on
+// screen, and the admin hands out a code that no longer works.
 //
 // So the client mints a requestToken per confirm-dialog opening (see
 // components/ui/ConfirmDialog.tsx) and the action claims it in the SAME
 // transaction as its work. Postgres' unique index does the rest: the second
 // transaction blocks on the index, fails, and rolls its own work back with it.
 // Concurrency-safe in a way an "was there a recent one?" SELECT is not.
+//
+// Password reset does NOT use this: it collapses repeats per member instead,
+// under a row lock, and hands the repeat the SAME code rather than an error —
+// see resetPassword below.
 // ---------------------------------------------------------------------------
 
 /**
@@ -3509,51 +3562,140 @@ export function isDuplicateRequest(err: unknown): boolean {
   return JSON.stringify(meta?.target ?? "").includes("RequestClaim");
 }
 
+// ---------------------------------------------------------------------------
+// Setup codes — admin reset, "Resend code", and the account-state panel on
+// /admin/members/[id]. lib/setup-code.ts owns how a code is stored and
+// compared; lib/credentials.ts owns how sign-in uses it.
+// ---------------------------------------------------------------------------
+
 /**
- * Admin-initiated "forgot password": issues a fresh setup code (hashed into
- * passwordHash), flags mustChangePassword. There is no email-based reset — no
- * mail infrastructure is assumed to exist for every deployment of this app.
- *
- * Pass `requestToken` (the UI always does) to make a double-submit impossible
- * rather than merely unlikely: two concurrent calls with the same token issue
- * ONE code, and the loser throws DUPLICATE_REQUEST having changed nothing.
+ * How long a repeat reset of the same member BY THE SAME ADMIN returns the code
+ * that was just issued instead of replacing it. Long enough to swallow a double
+ * click, a retried request or a second tab; short enough that a deliberate
+ * "that code didn't work, give me another" always gets a new one.
  */
-export async function resetPassword(
+export const RESET_REPEAT_WINDOW_MS = 10_000;
+
+export interface IssuedSetupCode {
+  setupCode: string;
+  issuedAt: Date;
+  /** True when this call returned the code a reset moments earlier already issued, rather than replacing it. */
+  reused: boolean;
+}
+
+async function userIdFor(tx: Tx, orgId: string, email: string): Promise<string | null> {
+  const row = await tx.user.findUnique({ where: { orgId_email: { orgId, email: normalizeEmail(email) } }, select: { id: true } });
+  return row?.id ?? null;
+}
+
+/**
+ * Admin-initiated "forgot password". There is no email-based reset — no mail
+ * infrastructure is assumed to exist for every deployment of this app.
+ *
+ * ALWAYS ALLOWED: any member, any number of times, whatever state the account
+ * is in — active, pending from an earlier reset, pending from creation, or a
+ * legacy pending account whose code lives in passwordHash. A member who never
+ * got the code, lost it, or was handed a dead one needs another, and nothing
+ * here may stand in the way of that.
+ *
+ * Leaves exactly one credential — passwordHash null, setupCode set,
+ * mustChangePassword true — and the database's User_single_credential_check
+ * refuses any other shape. The previous code or password stops working the
+ * moment this commits.
+ *
+ * Double submit: the member's row is locked FOR UPDATE first, so two concurrent
+ * resets of one member run one after the other. The second then finds a code
+ * this same admin issued inside RESET_REPEAT_WINDOW_MS and returns THAT code,
+ * instead of generating one that would kill the code already on screen.
+ */
+export async function resetPassword(orgId: string, email: string, actor: string): Promise<IssuedSetupCode> {
+  const e = normalizeEmail(email);
+  const fresh = generateSetupCode();
+  const sealed = sealSetupCode(fresh);
+
+  return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "User" WHERE "orgId" = ${orgId} AND "email" = ${e} FOR UPDATE`;
+    const id = locked[0]?.id;
+    if (!id) throw new AppError("NOT_FOUND", "Member not found");
+
+    const current = await tx.user.findUniqueOrThrow({
+      where: { id },
+      select: { setupCode: true, setupCodeIssuedAt: true, setupCodeIssuedById: true },
+    });
+    const actorId = await userIdFor(tx, orgId, actor);
+    const now = new Date();
+
+    const issuedAt = current.setupCodeIssuedAt;
+    if (issuedAt && current.setupCodeIssuedById === actorId && now.getTime() - issuedAt.getTime() < RESET_REPEAT_WINDOW_MS) {
+      const existing = openSetupCode(current.setupCode);
+      if (existing) return { setupCode: existing, issuedAt, reused: true };
+    }
+
+    await tx.user.update({
+      where: { id },
+      data: { passwordHash: null, setupCode: sealed, setupCodeIssuedAt: now, setupCodeIssuedById: actorId, mustChangePassword: true },
+    });
+    await logAdminAction(tx, orgId, { actor, action: "reset_password", target: e });
+    return { setupCode: fresh, issuedAt: now, reused: false };
+  });
+}
+
+/**
+ * "Resend code": the member's CURRENT setup code, shown again — never a new
+ * one, so nothing the member may already have stops working. Null when there
+ * is nothing to show: they already chose a password, or their pending code
+ * predates the setupCode column (only a reset can issue a showable one).
+ * Logged, since it puts a credential on screen.
+ */
+export async function revealSetupCode(
   orgId: string,
   email: string,
   actor: string,
-  options: { requestToken?: string } = {},
-): Promise<string> {
+): Promise<{ setupCode: string; issuedAt: Date | null } | null> {
   const e = normalizeEmail(email);
-  const setupCode = generateSetupCode();
-  const passwordHash = await hashPassword(setupCode);
+  const user = await prisma.user.findUnique({
+    where: { orgId_email: { orgId, email: e } },
+    select: { setupCode: true, setupCodeIssuedAt: true },
+  });
+  if (!user) throw new AppError("NOT_FOUND", "Member not found");
+  const setupCode = openSetupCode(user.setupCode);
+  if (!setupCode) return null;
+  await logAdminAction(prisma, orgId, { actor, action: "view_setup_code", target: e });
+  return { setupCode, issuedAt: user.setupCodeIssuedAt };
+}
 
-  try {
-    return await prisma.$transaction(async (tx) => {
-      if (options.requestToken) await claimRequestToken(tx, orgId, "reset_password", options.requestToken, e);
-      try {
-        await tx.user.update({
-          where: { orgId_email: { orgId, email: e } },
-          data: { passwordHash, mustChangePassword: true },
-        });
-      } catch (err) {
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
-          throw new AppError("NOT_FOUND", "Member not found");
-        }
-        throw err;
-      }
-      await logAdminAction(tx, orgId, { actor, action: "reset_password", target: e });
-      return setupCode;
-    });
-  } catch (err) {
-    if (isDuplicateRequest(err)) {
-      throw new AppError(
-        "DUPLICATE_REQUEST",
-        "That reset was already issued — the setup code already on screen is the current one.",
-      );
-    }
-    throw err;
-  }
+export interface AccountAccess {
+  state: AccountState;
+  /** A pending code "Resend code" can show again. */
+  codeRetrievable: boolean;
+  /** The most recent reset or admin account creation, and who did it. Null when neither is on record. */
+  lastIssued: { action: "reset_password" | "create_member"; at: Date | null; actor: string } | null;
+  /** False when this email can't get past the sign-in domain gate — then no password or code will work for it. */
+  loginAllowed: boolean;
+}
+
+/** Everything /admin/members/[id] needs to show, at a glance, whether a member is waiting on a code. */
+export async function getAccountAccess(orgId: string, email: string): Promise<AccountAccess> {
+  const e = normalizeEmail(email);
+  const [auth, logRows, loginAllowed] = await Promise.all([
+    getAuthRecord(orgId, e),
+    prisma.adminLog.findMany({
+      where: { orgId, target: e, action: { in: ["reset_password", "create_member"] } },
+      include: { actor: { select: { email: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    }),
+    isLoginEmailAllowed(orgId, e),
+  ]);
+  const log = logRows.map(adminLogToDomain);
+  const last = log[0];
+  return {
+    state: await getAccountState(e, auth, log),
+    codeRetrievable: openSetupCode(auth?.setupCode) !== null,
+    lastIssued: last ? { action: last.action as "reset_password" | "create_member", at: last.timestamp, actor: last.actor } : null,
+    loginAllowed,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -3667,8 +3809,8 @@ export async function rotateJoinCodeById(
   const plaintext = generateSetupCode();
   const hash = await hashPassword(plaintext);
 
-  // Same guarantee as resetPassword above: the claim and the new code commit
-  // together, so two submissions of one confirmation rotate the code once.
+  // The claim and the new code commit together, so two submissions of one
+  // confirmation rotate the code once (see claimRequestToken above).
   try {
     return await prisma.$transaction(async (tx) => {
       if (options.requestToken) await claimRequestToken(tx, orgId, "rotate_join_code", options.requestToken, id);
@@ -3875,6 +4017,11 @@ export async function redeemJoinCodeForSignup(input: RedeemJoinCodeForSignupInpu
         where: { id: existingGuest.id },
         data: {
           passwordHash: input.passwordHash,
+          // A chosen password replaces any code an admin issued this row.
+          setupCode: null,
+          setupCodeIssuedAt: null,
+          setupCodeIssuedById: null,
+          mustChangePassword: false,
           firstName: input.firstName,
           lastName: input.lastName,
           role: matchedDbRole,
@@ -4161,6 +4308,7 @@ export interface BulkImportCommitResult {
 export async function commitBulkImport(orgId: string, rows: BulkImportRow[], actor: string): Promise<BulkImportCommitResult> {
   const seen = new Set<string>();
   const created: Array<{ email: string; setupCode: string }> = [];
+  const actorId = await userIdFor(prisma, orgId, actor);
 
   for (const raw of rows) {
     const email = normalizeEmail(raw.email);
@@ -4168,14 +4316,17 @@ export async function commitBulkImport(orgId: string, rows: BulkImportRow[], act
     if (seen.has(email)) continue;
     seen.add(email);
 
+    // Same pending shape as createMemberAccount.
     const setupCode = generateSetupCode();
-    const passwordHash = await hashPassword(setupCode);
     try {
       await prisma.user.create({
         data: {
           orgId,
           email,
-          passwordHash,
+          passwordHash: null,
+          setupCode: sealSetupCode(setupCode),
+          setupCodeIssuedAt: new Date(),
+          setupCodeIssuedById: actorId,
           firstName: raw.firstName.trim(),
           lastName: raw.lastName.trim(),
           role: roleToDb(raw.role),
@@ -4925,7 +5076,7 @@ export async function getMembersPage(
     }),
     prisma.user.findMany({
       where: { orgId, email: { in: emails } },
-      select: { email: true, passwordHash: true, role: true, mustChangePassword: true, status: true },
+      select: { email: true, passwordHash: true, setupCode: true, role: true, mustChangePassword: true, status: true },
     }),
     prisma.adminLog.findMany({
       where: { orgId, target: { in: emails } },

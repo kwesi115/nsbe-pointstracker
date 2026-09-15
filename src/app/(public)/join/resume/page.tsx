@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import SignupResume from "@/components/join/SignupResume";
 import { AppError } from "@/lib/errors";
-import { getCoreFormUiConfig, getOrgById, getSignupUser } from "@/lib/repo";
+import { completeSignup, getCoreFormUiConfig, getOrgById, getSignupUser } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
 import { missingSignupSteps, signupIsComplete } from "@/lib/signup";
 import { DEFAULT_POST_SIGNUP_PATH, postSignupDestination } from "@/lib/signup-routes";
@@ -50,7 +50,25 @@ export default async function ResumeSignupPage({
   // Already finished — including an account latched by the backfill, and one
   // that finished in another tab a second ago. Never show a completed member a
   // wizard.
-  if (signupIsComplete(user)) redirect(destination);
+  //
+  // LATCH FIRST IF IT IS MISSING. The gate in (member)/layout.tsx reads the
+  // latch alone (see auth.ts session callback, which selects seven columns and
+  // cannot re-derive the full predicate). This page reads the predicate, which
+  // is strictly weaker. The gap between them is exactly one row shape — profile
+  // complete, latch null, which an admin filling in the last field by hand
+  // produces — and without this write that row would bounce: the layout sends
+  // it here, this page sends it back, forever. completeSignup() re-derives
+  // requiredSignupFieldsComplete server-side before it writes, so it can only
+  // latch a row that genuinely is finished, and it is idempotent. One write,
+  // once, and the two guards agree from then on.
+  if (signupIsComplete(user)) {
+    if (!user.signupCompletedAt) {
+      // Best-effort: if it fails the member still reaches `destination`, and
+      // the worst case is that they pass through here again next request.
+      await completeSignup(session.user.orgId, session.user.email).catch(() => {});
+    }
+    redirect(destination);
+  }
 
   const [org, config] = await Promise.all([getOrgById(session.user.orgId), getCoreFormUiConfig(session.user.orgId)]);
 

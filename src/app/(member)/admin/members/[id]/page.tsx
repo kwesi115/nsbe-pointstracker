@@ -2,6 +2,7 @@ import { SquareArrowOutUpRight } from "lucide-react";
 import { guardAdminPage } from "@/lib/access-guards";
 import AccessDenied from "../../_components/AccessDenied";
 import { notFound } from "next/navigation";
+import AccountAccessPanel from "@/components/admin/AccountAccessPanel";
 import AdminHousePanel from "@/components/admin/AdminHousePanel";
 import AdminMembershipPanel from "@/components/admin/AdminMembershipPanel";
 import AdminNav from "@/components/admin/AdminNav";
@@ -14,7 +15,7 @@ import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { normalizeEmail } from "@/lib/email";
 import { formatDate, formatDateTime, memberDisplayName } from "@/lib/format";
 import { attendanceRate, isEligible, longestAttendanceStreak } from "@/lib/points";
-import { getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory, resolveVerifierNames } from "@/lib/repo";
+import { getAccountAccess, getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory, resolveVerifierNames } from "@/lib/repo";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -28,7 +29,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(orgId, id);
   if (!member) notFound();
 
-  const [history, events, adminLog, season, coreFormConfig, permissions, verifiers] = await Promise.all([
+  const [history, events, adminLog, season, coreFormConfig, permissions, verifiers, access] = await Promise.all([
     getMemberHistory(orgId, member.email),
     getEvents(orgId),
     getAdminLog(orgId),
@@ -36,6 +37,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     getCoreFormConfig(orgId),
     getActivePermissions(orgId, member.email),
     resolveVerifierNames(orgId, member),
+    getAccountAccess(orgId, member.email),
   ]);
 
   const eventById = new Map(events.map((e) => [e.eventId, e]));
@@ -90,6 +92,11 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       <section className="flex flex-wrap items-center gap-3">
         <RoleSelect email={member.email} role={member.role} />
         <span className="text-sm text-muted">joined {formatDate(member.joinedAt)}</span>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Account access</h2>
+        <AccountAccessPanel email={member.email} access={access} />
       </section>
 
       <section className="flex flex-col gap-3">

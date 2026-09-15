@@ -26,8 +26,10 @@ const requireSession = vi.fn();
 vi.mock("@/lib/session", () => ({ requireSession: () => requireSession() }));
 
 const getSignupUser = vi.fn();
+const completeSignup = vi.fn();
 vi.mock("@/lib/repo", () => ({
   getSignupUser: (...args: unknown[]) => getSignupUser(...args),
+  completeSignup: (...args: unknown[]) => completeSignup(...args),
   getOrgById: vi.fn(async () => ({ id: "org-1", slug: "howard-nsbe", name: "Howard NSBE" })),
   getCoreFormUiConfig: vi.fn(async () => ({
     majors: ["Computer Engineering"],
@@ -98,6 +100,7 @@ async function render(search: Record<string, string> = {}): Promise<{ redirected
 beforeEach(() => {
   requireSession.mockReset().mockResolvedValue(SESSION);
   getSignupUser.mockReset().mockResolvedValue(incompleteMember());
+  completeSignup.mockReset().mockResolvedValue({ completedAt: new Date(), missingSteps: [] });
 });
 
 describe("who /join/resume lets in", () => {
@@ -114,6 +117,32 @@ describe("who /join/resume lets in", () => {
   it("redirects a member whose data already satisfies the predicate, even without the latch", async () => {
     // The accounts the backfill caught — and any it missed.
     getSignupUser.mockResolvedValue(completeMember({ signupCompletedAt: null }));
+    expect((await render()).redirectedTo).toBe("/events");
+  });
+
+  it("LATCHES that member on the way out, so the member layout stops sending them here", async () => {
+    // The gate in (member)/layout.tsx reads session.user.signupComplete, which
+    // is now the latch alone (auth.ts selects seven columns and cannot re-derive
+    // this predicate). Without the write below, the layout would send this row
+    // here and this page would send it straight back: a redirect loop.
+    getSignupUser.mockResolvedValue(completeMember({ signupCompletedAt: null }));
+
+    expect((await render()).redirectedTo).toBe("/events");
+    expect(completeSignup).toHaveBeenCalledWith("org-1", "ada@bison.howard.edu");
+  });
+
+  it("does not re-latch an account that already carries one", async () => {
+    getSignupUser.mockResolvedValue(completeMember({ signupCompletedAt: new Date() }));
+
+    await render();
+
+    expect(completeSignup).not.toHaveBeenCalled();
+  });
+
+  it("still redirects when the latch write fails — best effort, never a dead end", async () => {
+    getSignupUser.mockResolvedValue(completeMember({ signupCompletedAt: null }));
+    completeSignup.mockRejectedValue(new Error("database is down"));
+
     expect((await render()).redirectedTo).toBe("/events");
   });
 

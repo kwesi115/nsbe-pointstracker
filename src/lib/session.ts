@@ -1,6 +1,7 @@
 /**
  * Server-side auth guards for pages and route handlers. Not usable in
- * middleware — auth() runs the session callback, which reads the workbook.
+ * middleware — auth() runs the session callback, which queries Postgres
+ * (proxy.ts reads the JWT directly with getToken() instead).
  */
 
 import type { Session } from "next-auth";

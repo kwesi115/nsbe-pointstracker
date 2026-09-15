@@ -172,7 +172,7 @@ export default function MemberImport() {
       <ConfirmDialog<CommitImportResult>
         open={confirming}
         title={`Create ${preview?.toCreate.length ?? 0} member accounts?`}
-        description="Each one gets a fresh setup code. You'll get a one-time CSV of those codes to hand out — it won't be shown again after this."
+        description="Each one gets a fresh setup code. You'll get a CSV of those codes to hand out; any single code can also be shown again from that member's page until they choose a password."
         confirmLabel="Create accounts"
         action={commitImportAction}
         initialState={INITIAL_COMMIT_STATE}

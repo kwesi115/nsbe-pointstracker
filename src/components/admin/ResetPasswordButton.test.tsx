@@ -8,8 +8,8 @@
  * the result arrived — so a second click issued a second setup code and the one
  * on screen silently stopped working.
  *
- * The action itself is mocked here; lib/request-claims.test.ts covers what the
- * real one does when two requests arrive anyway.
+ * The action itself is mocked here; lib/reset-password.test.ts covers what the
+ * real one does — including when two requests arrive anyway.
  */
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,7 +100,7 @@ describe("the reset password button", () => {
     expect(screen.getByText("SETUP-1111")).toBeTruthy();
   });
 
-  it("the email travels in the submission, with a request token for the server to collapse duplicates on", async () => {
+  it("the email travels in the submission", async () => {
     resetPasswordAction.mockResolvedValue({ error: null, result: CODE });
 
     renderButton();
@@ -110,7 +110,6 @@ describe("the reset password button", () => {
 
     const submitted = resetPasswordAction.mock.calls[0][1] as FormData;
     expect(submitted.get("email")).toBe("ada@bison.howard.edu");
-    expect(String(submitted.get("requestToken")).length).toBeGreaterThan(8);
   });
 
   it("a failed reset keeps the dialog open with the error, and shows no setup code", async () => {
@@ -141,5 +140,47 @@ describe("the reset password button", () => {
     await flush();
 
     expect(screen.getByText("SETUP-1111")).toBeTruthy();
+  });
+
+  it("tells the admin the reset replaces any previous code — in the dialog and beside the new code", async () => {
+    resetPasswordAction.mockResolvedValue({ error: null, result: CODE });
+
+    renderButton();
+    await click(trigger());
+    expect(within(dialogEl()).getByText("This replaces any previous code.")).toBeTruthy();
+
+    await click(confirm());
+    await flush();
+    const besideCode = screen.getAllByText("This replaces any previous code.").filter((el) => !dialogEl().contains(el));
+    expect(besideCode).toHaveLength(1);
+  });
+
+  it("an already-reset member can be reset again, and the new code replaces the old one on screen", async () => {
+    resetPasswordAction
+      .mockResolvedValueOnce({ error: null, result: CODE })
+      .mockResolvedValueOnce({ error: null, result: { ...CODE, setupCode: "SETUP-2222" } });
+
+    renderButton();
+    await click(trigger());
+    await click(confirm());
+    await flush();
+    await click(trigger());
+    await click(confirm());
+    await flush();
+
+    expect(resetPasswordAction).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("SETUP-2222")).toBeTruthy();
+    expect(screen.queryByText("SETUP-1111")).toBeNull();
+  });
+
+  it("warns when the member's email can't sign in, so the code would be rejected", async () => {
+    resetPasswordAction.mockResolvedValue({ error: null, result: { ...CODE, loginBlocked: true } });
+
+    renderButton();
+    await click(trigger());
+    await click(confirm());
+    await flush();
+
+    expect(screen.getByRole("alert").textContent).toMatch(/can.t sign in/);
   });
 });

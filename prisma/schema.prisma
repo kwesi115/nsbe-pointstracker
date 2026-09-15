@@ -143,18 +143,26 @@ model JoinCode {
   @@index([orgId, active])
 }
 
-// passwordHash is nullable: a GUEST row created by registerGuest() has no
-// password at all (not even an unguessable one) — see lib/auth.ts authorize(),
-// which rejects role GUEST / null passwordHash outright, regardless of what's
-// submitted. Every other role always has a hash: self-service signup hashes
-// the chosen password immediately, admin-provisioned accounts get a bcrypt
-// hash of a random setup code (mustChangePassword = true).
+// A User holds AT MOST ONE credential, enforced by the CHECK constraint
+// User_single_credential_check (see migration 20260914200000_setup_code_column):
+//   - passwordHash set, setupCode null — a real password (self-service signup,
+//     or after /set-password);
+//   - passwordHash null, setupCode set — pending: admin-created or reset, the
+//     member signs in with the setup code (mustChangePassword = true);
+//   - both null — a GUEST row from registerGuest(), which can never sign in.
+// Accounts left pending by the old scheme still carry a bcrypt hash of their
+// code in passwordHash with setupCode null; lib/credentials.ts accepts those.
 model User {
   id                 String          @id @default(cuid())
   orgId              String
   org                Org             @relation(fields: [orgId], references: [id])
   email              String
   passwordHash       String?
+  /// Sealed (AES-256-GCM under CODE_SECRET), never plaintext — see lib/setup-code.ts.
+  setupCode           String?
+  setupCodeIssuedAt   DateTime?
+  /// The admin who issued the current code. Keys resetPassword's double-submit window.
+  setupCodeIssuedById String?
   firstName          String
   lastName           String
   studentId          String?
