@@ -32,6 +32,7 @@ import type { Denial, FeatureName, PermissionName, Role } from "./types";
 export const PERMISSION_LABEL: Record<PermissionName, string> = {
   verifications_write: "Membership audit",
   attendance_write: "Attendance editing",
+  points_write: "Point adjustments",
 };
 
 /**
@@ -53,10 +54,20 @@ export const PERMISSION_LABEL: Record<PermissionName, string> = {
  *                        comment: every officer can read the directory, and
  *                        only an admin, or an officer explicitly granted
  *                        this, can change what it says.
+ *
+ *   points_write         ADMIN only. Adds or revokes a signed point
+ *                        adjustment — moving a member up or down the
+ *                        leaderboard by fiat, with no attendance behind it.
+ *                        Its own domain rather than a reuse of
+ *                        attendance_write on purpose: someone trusted to fix
+ *                        an attendance typo is not thereby trusted to move
+ *                        people on the leaderboard, and a single grant must
+ *                        not hand out both.
  */
 const PERMISSION_ROLES: Record<PermissionName, readonly Role[]> = {
   verifications_write: ["admin", "eboard"],
   attendance_write: ["admin"],
+  points_write: ["admin"],
 };
 
 /** True when `role` holds `permission` by virtue of the role alone. The one implementation — lib/permissions.ts defers to it rather than re-deriving a role comparison. */
@@ -177,6 +188,7 @@ export const ADMIN_SURFACES = [
   { href: "/admin/settings", label: "Settings", requires: { level: "admin" } },
   { href: "/admin/qr", label: "QR code", requires: { level: "eboard" } },
   { href: "/admin/join-codes", label: "Join codes", requires: { level: "admin" } },
+  { href: "/admin/trash", label: "Trash", requires: { level: "admin" } },
 ] as const satisfies readonly { href: string; label: string; requires: Requirement }[];
 
 export type AdminHref = (typeof ADMIN_SURFACES)[number]["href"];

@@ -1,7 +1,7 @@
 "use client";
 
 import { Lock } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Description from "@/components/forms/Description";
 import FileDropField from "@/components/forms/FileDropField";
 import HouseBlock from "@/components/forms/HouseBlock";
@@ -13,10 +13,12 @@ import {
   CLASSIFICATION_OPTIONS,
   OTHER_MAJOR,
   SHIRT_SIZE_OPTIONS,
+  askableFields,
   coreField,
-  getMissingFields,
+  liveFields,
   type CoreFieldKey,
   type CoreFormAnswers,
+  type RenderedFieldKey,
 } from "@/lib/core-form";
 import type { House } from "@/lib/houses";
 import type { Member } from "@/lib/types";
@@ -72,13 +74,26 @@ type CoreCheckInMember = Pick<
 >;
 
 /**
+ * Marks a live input for CheckInFlow to find when the server names it in a
+ * fieldErrors payload — `data-core-field` carries the RenderedFieldKey, so
+ * the lookup never depends on the useId()-generated input ids.
+ */
+function Live({ field, children }: { field: RenderedFieldKey; children: ReactNode }) {
+  return <div data-core-field={field}>{children}</div>;
+}
+
+/**
  * The check-in form is a GAP-FILLER: a field renders as a live question only
  * when lib/core-form.ts getMissingFields says it's missing, stale, or
  * answered No. Everything already on the account renders instead as a
  * read-only receipt row with an inline Edit — clicking Edit is the ONLY other
- * way a field becomes live (see `editing` below). This is the single
- * implementation other than getMissingFields itself; no label, description,
- * option list, or "what's missing" rule is duplicated here.
+ * way a field becomes live. Which fields are live is lib/core-form.ts
+ * liveFields, the same computation CheckInFlow submits and reports as
+ * `rendered` — so the server can accept exactly what was shown here. No
+ * label, description, option list, or "what's missing" rule is duplicated.
+ *
+ * `editing` is owned by CheckInFlow rather than here: it has to know what's
+ * live to build the payload, and to reveal a field the server rejected.
  */
 export default function CoreCheckInForm({
   member,
@@ -87,6 +102,8 @@ export default function CoreCheckInForm({
   value,
   onChange,
   errors,
+  editing,
+  onEdit,
   disabled = false,
   reduced = false,
 }: {
@@ -96,18 +113,16 @@ export default function CoreCheckInForm({
   value: CoreCheckInFormValue;
   onChange: (patch: CoreCheckInFormValue) => void;
   errors: Record<string, string>;
+  /** Fields the member pressed Edit on — live even though they aren't missing. */
+  editing: ReadonlySet<CoreFieldKey>;
+  onEdit: (...keys: CoreFieldKey[]) => void;
   disabled?: boolean;
   /** EBOARD_ONLY events (Part 6) — firstName/lastName/bisonEmail only, no studentId/classification/major/membership/house/resume. */
   reduced?: boolean;
 }) {
-  const missing = new Set(
-    getMissingFields(member, { audience: reduced ? "eboard_only" : "all" }, { SEASON: config.currentSeason }),
-  );
-  // The only other way a confirmed field becomes a live question — clicking
-  // "Edit" on its receipt row. Missing fields are always live regardless.
-  const [editing, setEditing] = useState<Set<CoreFieldKey>>(new Set());
-  const isLive = (key: CoreFieldKey) => missing.has(key) || editing.has(key);
-  const edit = (...keys: CoreFieldKey[]) => setEditing((prev) => new Set([...prev, ...keys]));
+  const event = { audience: reduced ? "eboard_only" : "all" } as const;
+  const live = liveFields({ user: member, event, config: { SEASON: config.currentSeason }, editing, majorValue: value.major });
+  const edit = onEdit;
 
   const vars = {
     membershipSiteUrl: config.membershipSiteUrl,
@@ -115,28 +130,25 @@ export default function CoreCheckInForm({
     nationalMembershipUrl: config.nationalMembershipUrl,
   };
 
-  // Two independent reasons the member-profile half of this form doesn't
-  // apply, kept as two named conditions because they answer different
-  // questions (see getMissingFields). An E-Board officer is `memberProfile`
-  // at every event, and `reduced` only at an EBOARD_ONLY one.
-  const memberProfile = member.role !== "admin"; // WHO YOU ARE
-  const showMemberFields = memberProfile && !reduced; // ...and WHAT EVENT YOU'RE AT
+  // The member-profile half of this form doesn't apply to an ADMIN (WHO YOU
+  // ARE) or at an EBOARD_ONLY event (WHAT EVENT YOU'RE AT) — askableFields
+  // states both reductions once, for this form and for the server.
+  const showMemberFields = askableFields(member.role, event).has("nsbeMembershipId");
 
-  const nameLive = isLive("firstName") || isLive("lastName");
-  const studentIdLive = showMemberFields && isLive("studentId");
-  const phoneLive = showMemberFields && isLive("phone");
-  const personalEmailLive = showMemberFields && isLive("personalEmail");
-  const tshirtSizeLive = showMemberFields && isLive("tshirtSize");
-  const classificationLive = showMemberFields && isLive("classification");
-  const majorLive = showMemberFields && isLive("major");
-  // isLive("majorOther") covers the server-known case (major already "Other"
-  // on file with a blank majorOther); the second clause covers picking
-  // "Other" fresh this session, which getMissingFields couldn't have known about.
-  const majorOtherLive = showMemberFields && (isLive("majorOther") || (majorLive && value.major === OTHER_MAJOR));
-  const duesLive = showMemberFields && isLive("duesPaid");
-  const nationalLive = showMemberFields && isLive("nationalMember");
-  const houseLive = showMemberFields && isLive("house");
-  const resumeLive = showMemberFields && isLive("resume");
+  const nameLive = live.has("firstName");
+  const studentIdLive = live.has("studentId");
+  const phoneLive = live.has("phone");
+  const personalEmailLive = live.has("personalEmail");
+  const tshirtSizeLive = live.has("tshirtSize");
+  const classificationLive = live.has("classification");
+  const majorLive = live.has("major");
+  // Either the server-known case (major already "Other" on file with a blank
+  // majorOther) or "Other" picked this session — liveFields covers both.
+  const majorOtherLive = live.has("majorOther");
+  const duesLive = live.has("duesPaid");
+  const nationalLive = live.has("nationalMember");
+  const houseLive = live.has("house");
+  const resumeLive = live.has("resume");
 
   // The one place preselection is correct (Part: seasonal refresh) — the
   // member is confirming a known value, not answering fresh. Only shown when
@@ -215,6 +227,7 @@ export default function CoreCheckInForm({
       {nameLive ? (
         <section className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Live field="firstName">
             <Field label={coreField("firstName").label} required error={errors.firstName}>
               {(id, describedBy) => (
                 <input
@@ -227,6 +240,8 @@ export default function CoreCheckInForm({
                 />
               )}
             </Field>
+            </Live>
+            <Live field="lastName">
             <Field label={coreField("lastName").label} required error={errors.lastName}>
               {(id, describedBy) => (
                 <input
@@ -239,11 +254,13 @@ export default function CoreCheckInForm({
                 />
               )}
             </Field>
+            </Live>
           </div>
         </section>
       ) : null}
 
       {studentIdLive ? (
+        <Live field="studentId">
         <Field label={coreField("studentId").label} required error={errors.studentId} help={coreField("studentId").helpText}>
           {(id, describedBy) => (
             <input
@@ -256,9 +273,11 @@ export default function CoreCheckInForm({
             />
           )}
         </Field>
+        </Live>
       ) : null}
 
       {phoneLive ? (
+        <Live field="phone">
         <Field label={coreField("phone").label} required error={errors.phone}>
           {(id, describedBy) => (
             <input
@@ -272,9 +291,11 @@ export default function CoreCheckInForm({
             />
           )}
         </Field>
+        </Live>
       ) : null}
 
       {personalEmailLive ? (
+        <Live field="personalEmail">
         <Field label={coreField("personalEmail").label} required error={errors.personalEmail} help={coreField("personalEmail").helpText}>
           {(id, describedBy) => (
             <input
@@ -288,9 +309,11 @@ export default function CoreCheckInForm({
             />
           )}
         </Field>
+        </Live>
       ) : null}
 
       {tshirtSizeLive ? (
+        <Live field="tshirtSize">
         <Field label={coreField("tshirtSize").label} required error={errors.tshirtSize} help={coreField("tshirtSize").helpText}>
           {(id, describedBy) => (
             <select
@@ -312,6 +335,7 @@ export default function CoreCheckInForm({
             </select>
           )}
         </Field>
+        </Live>
       ) : null}
 
       {classificationLive || majorLive || majorOtherLive ? (
@@ -321,6 +345,7 @@ export default function CoreCheckInForm({
           ) : null}
 
           {classificationLive ? (
+            <Live field="classification">
             <Field label={coreField("classification").label} required error={errors.classification}>
               {(id, describedBy) => (
                 <select
@@ -342,9 +367,11 @@ export default function CoreCheckInForm({
                 </select>
               )}
             </Field>
+            </Live>
           ) : null}
 
           {majorLive ? (
+            <Live field="major">
             <Field label={coreField("major").label} required error={errors.major}>
               {(id, describedBy) => (
                 <select
@@ -367,9 +394,11 @@ export default function CoreCheckInForm({
                 </select>
               )}
             </Field>
+            </Live>
           ) : null}
 
           {majorOtherLive ? (
+            <Live field="majorOther">
             <Field label={coreField("majorOther").label} required error={errors.majorOther}>
               {(id, describedBy) => (
                 <input
@@ -382,6 +411,7 @@ export default function CoreCheckInForm({
                 />
               )}
             </Field>
+            </Live>
           ) : null}
         </section>
       ) : null}
@@ -391,6 +421,7 @@ export default function CoreCheckInForm({
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Membership</h2>
 
           {duesLive ? (
+            <Live field="duesPaid">
             <Field label={coreField("duesPaid").label} required error={errors.duesPaid}>
               {(id, describedBy) => (
                 <div className="flex flex-col gap-2">
@@ -406,10 +437,11 @@ export default function CoreCheckInForm({
                 </div>
               )}
             </Field>
+            </Live>
           ) : null}
 
           {nationalLive ? (
-            <>
+            <Live field="nationalMember">
               <Field label={coreField("nationalMember").label} required error={errors.nationalMember}>
                 {(id, describedBy) => (
                   <div className="flex flex-col gap-2">
@@ -425,7 +457,7 @@ export default function CoreCheckInForm({
                   </div>
                 )}
               </Field>
-            </>
+            </Live>
           ) : null}
 
           {/*
@@ -434,7 +466,8 @@ export default function CoreCheckInForm({
             rather than under it. Optional, so it never enters the missing
             set (see getMissingFields) and never blocks a check-in.
           */}
-          <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText}>
+          <Live field="nsbeMembershipId">
+          <Field label={coreField("nsbeMembershipId").label} help={coreField("nsbeMembershipId").helpText} error={errors.nsbeMembershipId}>
             {(id, describedBy) => (
               <input
                 id={id}
@@ -446,11 +479,12 @@ export default function CoreCheckInForm({
               />
             )}
           </Field>
+          </Live>
         </section>
       ) : null}
 
       {houseLive ? (
-        <section className="flex flex-col gap-4">
+        <section data-core-field="house" className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">NSBE House</h2>
           <HouseBlock
             houses={config.houses}
@@ -470,7 +504,7 @@ export default function CoreCheckInForm({
       ) : null}
 
       {resumeLive ? (
-        <section className="flex flex-col gap-4">
+        <section data-core-field="resume" className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Resume</h2>
           {member.resumeFileId ? (
             <>

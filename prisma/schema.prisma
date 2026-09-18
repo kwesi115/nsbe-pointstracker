@@ -72,6 +72,10 @@ enum AwardKind {
   GAME_COMPETITION
   MONTHLY_CHAMPION
   MANUAL
+  // A signed correction to a member's total — the ONLY kind whose points may
+  // be negative (PointAward_points_sign_check). Never a Registration edit: see
+  // lib/repo.ts createPointAdjustment.
+  ADJUSTMENT
 }
 
 enum ShirtSize {
@@ -93,6 +97,10 @@ enum Permission {
   // E-Board officer reads attendance but needs this granted explicitly to
   // add, remove, or re-point a registration, because all three award points.
   ATTENDANCE_WRITE
+  // Held outright only by ADMIN. Deliberately NOT folded into ATTENDANCE_WRITE:
+  // fixing an attendance typo and moving someone up or down the leaderboard by
+  // fiat are different trusts (see lib/access.ts PERMISSION_ROLES).
+  POINTS_WRITE
 }
 
 // A chapter. One row for launch ("howard-nsbe"); everything org-scoped below
@@ -241,6 +249,18 @@ model User {
    */
   eboardPosition String?
 
+  // The trash bin (see lib/repo.ts trashMember / purgeTrashedMember). A row
+  // with deletedAt set is hidden from every read in lib/repo.ts unless the
+  // caller passes includeDeleted — the filter lives there, not here, so it is
+  // spelled out at each query rather than implied. Registrations, awards and
+  // files are all KEPT while trashed; restoring is clearing these four
+  // columns. permanentDeleteAt is deletedAt + Config.TRASH_RETENTION_DAYS,
+  // recomputed for everything in the bin when that setting changes.
+  deletedAt         DateTime?
+  deletedById       String?
+  deleteReason      String?
+  permanentDeleteAt DateTime?
+
   registrations      Registration[]
   createdEvents      Event[]        @relation("EventCreatedBy")
   openedEvents       Event[]        @relation("EventOpenedBy")
@@ -262,6 +282,7 @@ model User {
   @@index([status])
   @@index([duesVerifiedAt])
   @@index([nationalVerifiedAt])
+  @@index([orgId, permanentDeleteAt])
 }
 
 // Never publicly addressable — always served through GET /api/files/[id],
@@ -349,6 +370,14 @@ model EventGroup {
 // treats NULL as distinct, so each constraint only actually bites on the kind
 // it's named for) — never by application logic alone. MANUAL awards carry
 // neither eventId nor periodMonth and aren't count-limited.
+//
+// ADJUSTMENT rows are signed corrections: points may be negative, reason is at
+// least 10 characters, and season is stamped from Config.SEASON at creation so
+// a rollover drops them (see lib/points.ts awardCountsForSeason). Their
+// optional event link is relatedEventId, NOT eventId — eventId is part of the
+// GAME_COMPETITION cap below, so two adjustments tied to the same event would
+// collide on it. Both rules are also CHECK constraints (migration
+// 20260918120000_point_adjustments_and_trash).
 model PointAward {
   id          String    @id @default(cuid())
   orgId       String
@@ -370,10 +399,15 @@ model PointAward {
   revokedById String?
   revokedBy   User?     @relation("PointAwardRevokedBy", fields: [revokedById], references: [id])
   revokeNote  String?
+  // ADJUSTMENT only — see the model comment above.
+  season         String?
+  relatedEventId String?
+  relatedEvent   Event?  @relation("PointAwardRelatedEvent", fields: [relatedEventId], references: [id], onDelete: SetNull)
 
   @@unique([orgId, userId, kind, eventId])
   @@unique([orgId, userId, kind, periodMonth])
   @@index([orgId, userId])
+  @@index([orgId, kind, season])
 }
 
 model Event {
@@ -411,11 +445,22 @@ model Event {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  fields        FormField[]
-  registrations Registration[]
-  pointAwards   PointAward[]
+  // The trash bin — same four columns and same rules as User's. A trashed
+  // event's Registrations are kept, but count toward NOTHING until it is
+  // restored: every registration count in lib/repo.ts joins to Event and
+  // filters deletedAt, not only the registrant's.
+  deletedAt         DateTime?
+  deletedById       String?
+  deleteReason      String?
+  permanentDeleteAt DateTime?
+
+  fields             FormField[]
+  registrations      Registration[]
+  pointAwards        PointAward[]
+  relatedAdjustments PointAward[]   @relation("PointAwardRelatedEvent")
 
   @@unique([orgId, slug])
+  @@index([orgId, permanentDeleteAt])
   @@index([orgId])
   @@index([status, opensAt, closesAt])
   @@index([categoryId])

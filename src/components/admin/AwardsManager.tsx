@@ -16,7 +16,8 @@ import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Field, { inputClass } from "@/components/ui/Field";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatSigned } from "@/lib/format";
+import type { MonthNeedingRecalculation } from "@/lib/repo";
 import type { PointAward } from "@/lib/types";
 
 const INITIAL_MANUAL_STATE: AwardActionState = { error: null };
@@ -40,7 +41,11 @@ function RevokeControl({ award }: { award: PointAward }) {
       <ConfirmDialog<AwardActionState>
         open={open}
         title="Revoke this award?"
-        description="The points come off the member's season total immediately."
+        description={
+          award.points < 0
+            ? "The points go back on the member's season total immediately."
+            : "The points come off the member's season total immediately."
+        }
         confirmLabel="Revoke award"
         tone="danger"
         action={revokeAwardAction}
@@ -61,6 +66,7 @@ const KIND_LABEL: Record<PointAward["kind"], string> = {
   game_competition: "Game / competition",
   monthly_champion: "Monthly champion",
   manual: "Manual",
+  adjustment: "Adjustment",
 };
 
 function AwardsTable({ awards }: { awards: PointAward[] }) {
@@ -79,7 +85,7 @@ function AwardsTable({ awards }: { awards: PointAward[] }) {
           <tr key={a.id} className="border-b border-border last:border-0">
             <td className={tdClass}>{a.email}</td>
             <td className={tdClass}>{KIND_LABEL[a.kind]}</td>
-            <td className={`${tdClass} numeric`}>+{a.points}</td>
+            <td className={`${tdClass} numeric`}>{formatSigned(a.points)}</td>
             <td className={tdClass}>{a.reason}</td>
             <td className={tdClass}>{formatDateTime(a.awardedAt)}</td>
             <td className={tdClass}>
@@ -100,8 +106,8 @@ function ManualAwardForm() {
         <Field label="Member email" required>
           {(id) => <input id={id} type="email" name="email" required className={inputClass} />}
         </Field>
-        <Field label="Points" required>
-          {(id) => <input id={id} type="number" name="points" required defaultValue={1} className={inputClass} />}
+        <Field label="Points" required help="Zero or more. To take points away, use Adjust points on the member's page.">
+          {(id) => <input id={id} type="number" name="points" required min={0} defaultValue={1} className={inputClass} />}
         </Field>
         <Field label="Reason" required>
           {(id) => <input id={id} name="reason" required className={inputClass} />}
@@ -175,6 +181,8 @@ function ChampionCalculator() {
                   <li key={c.email}>
                     {c.firstName} {c.lastName} ({c.email}) — {c.count} events
                     {preview.alreadyMaterialized.includes(c.email) ? <Badge tone="signal">Already awarded</Badge> : null}
+                    {/* A trashed member still competes — trashing hides a person, it doesn't hand their month to someone else. */}
+                    {c.inTrash ? <Badge tone="muted">In trash — award won&apos;t count unless restored</Badge> : null}
                   </li>
                 ))}
               </ul>
@@ -191,11 +199,29 @@ function ChampionCalculator() {
   );
 }
 
-export default function AwardsManager({ awards }: { awards: PointAward[] }) {
+export default function AwardsManager({
+  awards,
+  monthsNeedingRecalculation,
+}: {
+  awards: PointAward[];
+  monthsNeedingRecalculation: MonthNeedingRecalculation[];
+}) {
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Monthly Engagement Champion</h2>
+        {/* A calculated champion is materialized and never recomputes on its own — so an event trashed after the
+            calculation leaves a result that may be stale. Flagged, never silently recalculated. */}
+        {monthsNeedingRecalculation.map((m) => (
+          <div key={m.month} className="flex flex-col gap-1 rounded-xl border border-torch-border bg-torch-subtle px-4 py-3 text-sm text-foreground">
+            <p className="font-semibold">{m.label} may need recalculation</p>
+            <p className="text-xs text-muted">
+              Calculated before {m.events.length === 1 ? "this event was" : "these events were"} moved to the trash:{" "}
+              {m.events.map((e) => e.name).join(", ")}. Recalculate {m.label} below to settle who qualified — or restore
+              the event if it was deleted by mistake.
+            </p>
+          </div>
+        ))}
         <Card>
           <ChampionCalculator />
         </Card>

@@ -23,6 +23,9 @@ export const POST = withApiErrors(async (request: Request, ctx: { params: Promis
     code: String(body?.code ?? ""),
     core: body?.core ?? {},
     extra: body?.extra ?? {},
+    // What the form had live — only those fields are validated or written
+    // (lib/core-form.ts planCheckIn). Absent from a client older than this.
+    rendered: Array.isArray(body?.rendered) ? body.rendered : null,
     receivedAt,
     ip: clientIp(request),
   });

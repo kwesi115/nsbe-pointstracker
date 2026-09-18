@@ -7,7 +7,6 @@ import {
   parseDescription,
   resolveDescription,
   validateCoreAnswers,
-  validateReducedCoreAnswers,
   type CoreFieldKey,
   type CoreFormValidationContext,
   type GetMissingFieldsUser,
@@ -467,23 +466,9 @@ describe("validateCoreAnswers", () => {
   });
 });
 
-describe("validateReducedCoreAnswers — EBOARD_ONLY events (Part 6)", () => {
-  it("accepts just firstName/lastName", () => {
-    const result = validateReducedCoreAnswers({ firstName: "Ada", lastName: "Lovelace" });
-    expect(result).toEqual({ firstName: "Ada", lastName: "Lovelace" });
-  });
-
-  it("rejects a missing name", () => {
-    expect(() => validateReducedCoreAnswers({ firstName: "Ada" })).toThrow(AppError);
-    expect(() => validateReducedCoreAnswers({})).toThrow(AppError);
-  });
-
-  it("rejects full-form fields — the reduced form has no dues/national/House/resume/classification/major/studentId at all", () => {
-    expect(() =>
-      validateReducedCoreAnswers({ firstName: "Ada", lastName: "Lovelace", studentId: "12345", duesPaid: true }),
-    ).toThrow(AppError);
-  });
-});
+// The reduced EBOARD_ONLY form no longer has a schema of its own — it goes
+// through planCheckIn + validateCoreAnswers like every other check-in. See
+// checkin-plan.test.ts, "an EBOARD member at an EBOARD_ONLY event".
 
 describe("description parsing", () => {
   it("resolves {{token}} placeholders and extracts [label](url) as a real link", () => {

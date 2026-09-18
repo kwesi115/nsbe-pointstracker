@@ -8,8 +8,16 @@ import EboardSettingsForm from "@/components/admin/EboardSettingsForm";
 import ExportsSettingsForm from "@/components/admin/ExportsSettingsForm";
 import ExternalLinksForm from "@/components/admin/ExternalLinksForm";
 import SettingsForm from "@/components/admin/SettingsForm";
+import TrashSettingsForm from "@/components/admin/TrashSettingsForm";
 import Card from "@/components/ui/Card";
-import { DEFAULT_LEADERBOARD_DISCLAIMER, DEFAULT_NATIONAL_MEMBERSHIP_URL, getConfigValue, getCoreFormConfig } from "@/lib/repo";
+import {
+  DEFAULT_LEADERBOARD_DISCLAIMER,
+  DEFAULT_NATIONAL_MEMBERSHIP_URL,
+  getConfigValue,
+  getCoreFormConfig,
+  getTrashRetentionDays,
+  TRASH_RETENTION_MAX_DAYS,
+} from "@/lib/repo";
 
 export default async function AdminSettingsPage() {
   const guard = await guardAdminPage({ level: "admin" });
@@ -33,6 +41,7 @@ export default async function AdminSettingsPage() {
     eboardPointValue,
     eboardTrackEnabled,
     eboardRequiresMembership,
+    trashRetentionDays,
   ] = await Promise.all([
     getConfigValue(orgId, "CHAPTER_NAME", "NSBE"),
     getConfigValue(orgId, "SEASON", ""),
@@ -49,6 +58,7 @@ export default async function AdminSettingsPage() {
     getConfigValue(orgId, "EBOARD_POINT_VALUE", "1"),
     getConfigValue(orgId, "EBOARD_TRACK_ENABLED", "true"),
     getConfigValue(orgId, "EBOARD_REQUIRES_MEMBERSHIP", "false"),
+    getTrashRetentionDays(orgId),
   ]);
 
   return (
@@ -148,6 +158,13 @@ export default async function AdminSettingsPage() {
             eboardTrackEnabled={eboardTrackEnabled === "true"}
             eboardRequiresMembership={eboardRequiresMembership === "true"}
           />
+        </Card>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Trash</h2>
+        <Card>
+          <TrashSettingsForm retentionDays={trashRetentionDays} maxDays={TRASH_RETENTION_MAX_DAYS} />
         </Card>
       </section>
     </main>

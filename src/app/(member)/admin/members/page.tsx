@@ -4,6 +4,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import MemberImport from "@/components/admin/MemberImport";
 import MembersFilterBar from "@/components/admin/MembersFilterBar";
 import MembersTable from "@/components/admin/MembersTable";
+import { isAllowed } from "@/lib/access";
 import { guardAdminPage } from "@/lib/access-guards";
 import { SHIRT_SIZE_OPTIONS } from "@/lib/core-form";
 import {
@@ -122,6 +123,7 @@ export default async function AdminMembersPage({ searchParams }: { searchParams:
           filters={filters}
           houses={coreFormConfig.houses}
           exportsEnabled={guard.access.features.exports}
+          canAdjust={isAllowed(guard.access, { level: "permission", permission: "points_write" })}
         />
       </section>
     </main>

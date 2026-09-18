@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { ShieldAlert } from "lucide-react";
 import ActionButton from "@/components/ui/ActionButton";
 import Badge from "@/components/ui/Badge";
@@ -14,7 +14,12 @@ import Countdown from "@/components/Countdown";
 import { formatDate, formatDateTime, pluralize } from "@/lib/format";
 import { isOpen } from "@/lib/points";
 import type { EventCodeAlertState } from "@/lib/rate-limit";
-import type { EventWithStats } from "@/lib/repo";
+import type { EventWithStats, TrashEventPreview } from "@/lib/repo";
+import {
+  previewTrashEventAction,
+  trashEventAction,
+  type TrashActionState,
+} from "@/app/(member)/admin/trash/actions";
 import {
   cancelEventAction,
   clearEventCodeLockAction,
@@ -56,10 +61,13 @@ type EventWithAlert = EventWithStats & { codeAlert: EventCodeAlertState };
 export default function EventsBoard({
   initialEvents,
   exportsEnabled,
+  canDelete,
 }: {
   initialEvents: EventWithAlert[];
   /** Config.EXPORTS_ENABLED for this org — see lib/features.ts. Hides the per-event "Export CSV" affordance, whose endpoint is gated by the same flag and would only 403. */
   exportsEnabled: boolean;
+  /** ADMIN only — moving an event to the trash takes points off everyone who attended. The action re-checks. */
+  canDelete: boolean;
 }) {
   const [allEvents, setEvents] = useState(initialEvents);
   const [now, setNow] = useState(() => new Date());
@@ -132,12 +140,12 @@ export default function EventsBoard({
       </Group>
       <Group title="Scheduled" empty="Nothing scheduled.">
         {scheduled.map((e) => (
-          <ScheduledRow key={e.eventId} event={e} onChanged={refresh} />
+          <ScheduledRow key={e.eventId} event={e} onChanged={refresh} canDelete={canDelete} />
         ))}
       </Group>
       <Group title="Past" empty="No past events yet.">
         {past.map((e) => (
-          <PastRow key={e.eventId} event={e} onChanged={refresh} exportsEnabled={exportsEnabled} />
+          <PastRow key={e.eventId} event={e} onChanged={refresh} exportsEnabled={exportsEnabled} canDelete={canDelete} />
         ))}
       </Group>
     </div>
@@ -270,7 +278,7 @@ function OpenRow({ event, onChanged }: { event: EventWithAlert; onChanged: () =>
   );
 }
 
-function ScheduledRow({ event, onChanged }: { event: EventWithStats; onChanged: () => void }) {
+function ScheduledRow({ event, onChanged, canDelete }: { event: EventWithStats; onChanged: () => void; canDelete: boolean }) {
   const { show } = useToast();
   const [canceling, setCanceling] = useState(false);
 
@@ -324,6 +332,7 @@ function ScheduledRow({ event, onChanged }: { event: EventWithStats; onChanged: 
               setCanceling(false);
             }}
           />
+          {canDelete ? <DeleteEventControl event={event} onChanged={onChanged} /> : null}
         </>
       }
     />
@@ -334,10 +343,12 @@ function PastRow({
   event,
   onChanged,
   exportsEnabled,
+  canDelete,
 }: {
   event: EventWithStats;
   onChanged: () => void;
   exportsEnabled: boolean;
+  canDelete: boolean;
 }) {
   const { show } = useToast();
 
@@ -385,8 +396,116 @@ function PastRow({
               <DurationSelect label="Reopen duration" />
             </ActionButton>
           ) : null}
+          {canDelete ? <DeleteEventControl event={event} onChanged={onChanged} /> : null}
         </>
       }
     />
+  );
+}
+
+const TRASH_INITIAL_STATE: TrashActionState = { error: null };
+
+function bonusText(bonus: number): string {
+  return bonus === 0 ? "no bonus" : `the +${bonus} bonus`;
+}
+
+/**
+ * "Delete" — moves the event to the trash. Not offered on an open event (the
+ * server refuses that too). The confirmation loads the real impact first:
+ * everyone who checked in loses it from every count, a calculated Monthly
+ * Champion month gets a warning (never a silent recalculation), and an NSBE
+ * Week group shows who moves between bonus tiers.
+ */
+function DeleteEventControl({ event, onChanged }: { event: EventWithStats; onChanged: () => void }) {
+  const { show } = useToast();
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<TrashEventPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+
+  function openDialog() {
+    setOpen(true);
+    setPreview(null);
+    setError(null);
+    startTransition(async () => {
+      const result = await previewTrashEventAction(event.eventId);
+      setPreview(result.preview);
+      setError(result.error);
+    });
+  }
+
+  return (
+    <>
+      <Button type="button" variant="ghost" onClick={openDialog}>
+        Delete
+      </Button>
+      <ConfirmDialog<TrashActionState>
+        open={open}
+        title={`Move "${event.name}" to the trash?`}
+        confirmLabel="Move to trash"
+        tone="danger"
+        action={trashEventAction}
+        initialState={TRASH_INITIAL_STATE}
+        payload={{ eventId: event.eventId }}
+        reason={{ label: "Reason", placeholder: "Created by mistake, duplicate of…", help: "Shown in the trash and recorded in the admin log." }}
+        confirmDisabled={!preview || preview.windowOpen}
+        onCancel={() => setOpen(false)}
+        onSuccess={() => {
+          setOpen(false);
+          show("Moved to the trash");
+          onChanged();
+        }}
+        description={
+          error ? (
+            <p className="font-medium text-alert">{error}</p>
+          ) : !preview ? (
+            <p>Working out the impact…</p>
+          ) : preview.windowOpen ? (
+            <p className="font-medium text-alert">This event is open for check-in right now. Close it first, then delete it.</p>
+          ) : (
+            <div className="flex flex-col gap-2 text-foreground">
+              <p>
+                {preview.membersAffected === 0
+                  ? "Nobody checked in to this event."
+                  : `${pluralize(preview.membersAffected, "member")} who checked in lose it from every count — events attended, leaderboard points and events, attendance rate, NSBE Week and Monthly Champion counts.`}
+                {preview.gameBonuses > 0 ? ` Its ${pluralize(preview.gameBonuses, "game bonus", "game bonuses")} stop counting too.` : ""}
+              </p>
+              {preview.championWarning ? (
+                <p className="rounded-lg border border-torch-border bg-torch-subtle px-3 py-2 font-medium">
+                  {preview.championWarning.message}
+                </p>
+              ) : null}
+              {preview.groupImpact ? (
+                <div className="rounded-lg bg-surface-raised px-3 py-2">
+                  <p className="font-medium">{preview.groupImpact.groupName}</p>
+                  {preview.groupImpact.transitions.length === 0 ? (
+                    <p className="text-muted">No one&apos;s bonus changes.</p>
+                  ) : (
+                    <ul className="list-disc pl-5">
+                      {preview.groupImpact.transitions.map((t) => (
+                        <li key={`${t.from}-${t.to}`}>
+                          {pluralize(t.members, "member")} will go from {bonusText(t.from)} to {bonusText(t.to)}.
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {preview.groupImpact.unreachableTiers.length > 0 ? (
+                    <p className="mt-1 text-xs text-muted">
+                      The group drops to {pluralize(preview.groupImpact.eventsAfter, "event")}. Tiers are counts, not fractions, so
+                      the {preview.groupImpact.unreachableTiers.map((t) => `${t.min}+ (+${t.bonus})`).join(", ")} tier can no longer
+                      be reached — edit the tiers on the group if everyone who attended every remaining event should still earn it.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <p className="text-muted">
+                Nothing is erased: restoring from the trash puts every count back exactly. Otherwise it&apos;s permanently
+                deleted in {pluralize(preview.retentionDays, "day")}.
+              </p>
+            </div>
+          )
+        }
+      />
+    </>
   );
 }

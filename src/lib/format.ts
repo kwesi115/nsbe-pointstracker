@@ -40,6 +40,18 @@ export function formatNumber(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/** "2026-09" -> "September 2026" — a Monthly Engagement Champion period in words. Anything malformed is returned as-is. */
+export function formatMonthKey(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return month;
+  return format(new Date(Number(match[1]), Number(match[2]) - 1, 1), "MMMM yyyy");
+}
+
+/** An explicit sign on anything non-zero — "+3", "-3", "0" — for a point change, where a bare "3" reads as a total. */
+export function formatSigned(n: number): string {
+  return n > 0 ? `+${n}` : String(n);
+}
+
 export function pluralize(n: number, singular: string, plural = `${singular}s`): string {
   return `${formatNumber(n)} ${n === 1 ? singular : plural}`;
 }

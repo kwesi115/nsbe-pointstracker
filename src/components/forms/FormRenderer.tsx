@@ -25,17 +25,19 @@ export default function FormRenderer({
   return (
     <div className="flex flex-col gap-5">
       {fields.map((field, index) => (
-        <FieldInput
-          // Index included because the builder's live preview can transiently
-          // have several fields with the same auto-derived fieldKey (e.g. two
-          // blank-labeled fields both slugify to "field") before they're named.
-          key={`${index}-${field.fieldKey}`}
-          field={field}
-          value={values[field.fieldKey]}
-          onChange={(v) => onChange(field.fieldKey, v)}
-          error={errors?.[field.fieldKey] ?? null}
-          disabled={disabled}
-        />
+        // Index included because the builder's live preview can transiently
+        // have several fields with the same auto-derived fieldKey (e.g. two
+        // blank-labeled fields both slugify to "field") before they're named.
+        // data-extra-field is how a check-in error finds its input to scroll to.
+        <div key={`${index}-${field.fieldKey}`} data-extra-field={field.fieldKey}>
+          <FieldInput
+            field={field}
+            value={values[field.fieldKey]}
+            onChange={(v) => onChange(field.fieldKey, v)}
+            error={errors?.[field.fieldKey] ?? null}
+            disabled={disabled}
+          />
+        </div>
       ))}
     </div>
   );

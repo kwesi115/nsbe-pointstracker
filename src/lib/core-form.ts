@@ -487,7 +487,10 @@ export function buildCoreFormSchema(ctx: CoreFormValidationContext) {
       if (missing.has("major") && data.major === undefined) {
         ctxRefine.addIssue({ code: "custom", path: ["major"], message: "Select a major" });
       }
-      if (data.major === OTHER_MAJOR && !data.majorOther?.trim()) {
+      // Two ways to owe a majorOther: picking "Other" now, or having "Other"
+      // on file with nothing beside it (getMissingFields asks for it alone).
+      const owesMajorOther = data.major === OTHER_MAJOR || (missing.has("majorOther") && data.major === undefined);
+      if (owesMajorOther && !data.majorOther?.trim()) {
         ctxRefine.addIssue({ code: "custom", path: ["majorOther"], message: "Tell us your major" });
       }
 
@@ -546,30 +549,217 @@ export function validateCoreAnswers(ctx: CoreFormValidationContext, answers: unk
 }
 
 // ---------------------------------------------------------------------------
-// Reduced core form — EBOARD_ONLY events (Part 6). Officers answering the
-// full form's dues/national/House/resume questions at every weekly meeting is
-// how a form gets abandoned; this variant is just enough to confirm identity.
+// The submit plan — what one check-in submission is validated against.
+//
+// getMissingFields decides what the form ASKS. That used to be only half of
+// the contract: the client also sent back values it never rendered (seeded
+// from the stored profile — a major, a personal email, a blank student ID),
+// and the schema above format-checked whatever arrived. A stored value the
+// schema dislikes — a free-text major written by an earlier "Other" check-in,
+// a major since removed from MAJORS_LIST, a personal email saved on /account
+// without the email check — then failed a check-in on a field the member was
+// never shown, usually on the one-tap screen with no fields at all.
+//
+// planCheckIn closes that. Computed server-side at submit, for that user and
+// that event, from the same getMissingFields the form rendered from:
+//
+//   accepted  what the member was shown AND actually answered. Anything else
+//             in the payload is dropped before validation — never checked,
+//             never written. That includes a stale value echoed from a page
+//             loaded before the profile changed in another tab, which would
+//             otherwise overwrite the newer value.
+//   required  what getMissingFields says is missing AND the member was shown.
+//   requiredButNotRendered
+//             missing, but NOT shown — the profile changed between page load
+//             and submit (a SEASON bump, an admin revoking dues or rejecting a
+//             House, a role change). Not the member's error: it's dropped from
+//             `required` so the check-in goes through, the caller logs it, and
+//             getMissingFields asks for it at the next check-in.
+//
+// The reduced EBOARD_ONLY form is not a second schema any more: getMissingFields
+// already stops at the name fields for it, and askableFields below says the
+// same thing about what the form can render, so one path validates both.
 // ---------------------------------------------------------------------------
 
-const REDUCED_SCHEMA = z
-  .object({
-    firstName: z.string().trim().min(1, "Required").max(200),
-    lastName: z.string().trim().min(1, "Required").max(200),
-  })
-  .strict();
+/** Every input the check-in form can render — and the vocabulary the client uses to report which ones it had live at submit. */
+export type RenderedFieldKey = CoreFieldKey | "nsbeMembershipId";
 
-export type ReducedCoreFormAnswers = z.infer<typeof REDUCED_SCHEMA>;
+/** The payload keys each rendered field submits. A field that wasn't rendered contributes none of them, and the server accepts none of them. */
+export const PAYLOAD_KEYS_BY_FIELD: Record<RenderedFieldKey, ReadonlyArray<keyof CoreFormAnswers>> = {
+  firstName: ["firstName"],
+  lastName: ["lastName"],
+  studentId: ["studentId"],
+  phone: ["phone"],
+  personalEmail: ["personalEmail"],
+  tshirtSize: ["tshirtSize"],
+  classification: ["classification"],
+  // Picking "Other" reveals the free-text box under the same question.
+  major: ["major", "majorOther"],
+  majorOther: ["majorOther"],
+  duesPaid: ["duesPaid"],
+  nationalMember: ["nationalMember"],
+  nsbeMembershipId: ["nsbeMembershipId"],
+  house: ["house", "houseProofFileId", "houseSkipped"],
+  resume: ["resumeAction", "resumeFileId"],
+};
 
-/** Validates the reduced form — same AppError shape as validateCoreAnswers, deliberately no other fields accepted. */
-export function validateReducedCoreAnswers(answers: unknown): ReducedCoreFormAnswers {
-  const result = REDUCED_SCHEMA.safeParse(answers);
-  if (!result.success) {
-    const fieldErrors: Record<string, string> = {};
-    for (const issue of result.error.issues) {
-      const key = issue.path.length > 0 ? String(issue.path[0]) : "_form";
-      if (!(key in fieldErrors)) fieldErrors[key] = issue.message;
-    }
-    throw new AppError("VALIDATION_FAILED", "Check the highlighted fields.", { fieldErrors });
+const RENDERED_FIELD_KEYS = Object.keys(PAYLOAD_KEYS_BY_FIELD) as RenderedFieldKey[];
+
+export function isRenderedFieldKey(key: unknown): key is RenderedFieldKey {
+  return typeof key === "string" && (RENDERED_FIELD_KEYS as string[]).includes(key);
+}
+
+/** The field whose input displays an error on `payloadKey` — "houseProofFileId" is shown by the House block, "resumeFileId" by Resume. Null for anything the form never renders ("_form", or a key no field owns). */
+export function fieldForPayloadKey(payloadKey: string): RenderedFieldKey | null {
+  if (isRenderedFieldKey(payloadKey)) return payloadKey;
+  return RENDERED_FIELD_KEYS.find((f) => (PAYLOAD_KEYS_BY_FIELD[f] as readonly string[]).includes(payloadKey)) ?? null;
+}
+
+/**
+ * What the form CAN render for this user at this event — getMissingFields' two
+ * reductions, stated once for the renderer and the server alike. An ADMIN, or
+ * anyone at an EBOARD_ONLY event, is shown their name and nothing else; every
+ * other member can be shown every field (live when missing, or on Edit).
+ */
+export function askableFields(role: Role, event: { audience: Audience }): Set<RenderedFieldKey> {
+  if (role === "admin" || event.audience === "eboard_only") return new Set<RenderedFieldKey>(["firstName", "lastName"]);
+  return new Set(RENDERED_FIELD_KEYS);
+}
+
+/**
+ * The inputs the check-in form has live right now — CoreCheckInForm renders
+ * exactly these, and CheckInFlow submits exactly these and reports them as
+ * `rendered`, so "what the member was shown" and "what the server accepts"
+ * are one computation. A field is live when getMissingFields asks for it, or
+ * the member pressed Edit on its receipt row; the NSBE Membership ID is always
+ * shown in the member half (optional, never "missing"); the two name inputs
+ * render as a pair; and picking "Other" reveals the free-text major.
+ */
+export function liveFields(input: {
+  user: GetMissingFieldsUser;
+  event: { audience: Audience };
+  config: GetMissingFieldsConfig;
+  editing: ReadonlySet<CoreFieldKey>;
+  /** The major currently selected in the form, if the member changed it this session. */
+  majorValue?: string;
+}): Set<RenderedFieldKey> {
+  const askable = askableFields(input.user.role, input.event);
+  const missing = new Set<RenderedFieldKey>(getMissingFields(input.user, input.event, input.config));
+  const live = new Set<RenderedFieldKey>();
+  for (const field of askable) {
+    if (field === "nsbeMembershipId" || missing.has(field) || input.editing.has(field as CoreFieldKey)) live.add(field);
   }
-  return result.data;
+  if (live.has("firstName") || live.has("lastName")) {
+    live.add("firstName");
+    live.add("lastName");
+  }
+  if (live.has("major") && input.majorValue === OTHER_MAJOR) live.add("majorOther");
+  return live;
+}
+
+/** The stored value a payload key would echo, for the fields the client ever seeds from the profile. */
+const STORED_VALUE: Partial<Record<keyof CoreFormAnswers, (u: CheckInProfile) => unknown>> = {
+  firstName: (u) => u.firstName,
+  lastName: (u) => u.lastName,
+  studentId: (u) => u.studentId,
+  phone: (u) => u.phone,
+  personalEmail: (u) => u.personalEmail,
+  tshirtSize: (u) => u.tshirtSize,
+  classification: (u) => u.classification,
+  major: (u) => u.major,
+  majorOther: (u) => u.majorOther,
+  nsbeMembershipId: (u) => u.nsbeMembershipId,
+  duesPaid: (u) => u.duesPaidReported,
+  nationalMember: (u) => u.nationalMemberReported,
+  house: (u) => u.house,
+};
+
+function normalized(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  return typeof v === "string" ? v.trim() : String(v);
+}
+
+function echoesStored(key: keyof CoreFormAnswers, value: unknown, user: CheckInProfile): boolean {
+  const stored = STORED_VALUE[key];
+  return stored !== undefined && normalized(value) === normalized(stored(user));
+}
+
+/** GetMissingFieldsUser plus the one optional field the form always shows but never counts as missing. */
+export type CheckInProfile = GetMissingFieldsUser & { nsbeMembershipId: string };
+
+export interface CheckInPlan {
+  /** getMissingFields for this user and event, computed now. */
+  missing: CoreFieldKey[];
+  accepted: Set<RenderedFieldKey>;
+  /** Handed to validateCoreAnswers as its `missing` — the only fields it may require. */
+  required: Set<CoreFieldKey>;
+  requiredButNotRendered: CoreFieldKey[];
+  /** Payload keys dropped before validation — sent for a field that wasn't shown, or an unchanged echo. */
+  dropped: string[];
+  /** The payload that gets validated and written: accepted fields only, names filled from the profile when not shown. */
+  answers: Record<string, unknown>;
+}
+
+/**
+ * `rendered` is what the client reports it had live (see CheckInFlow). Null
+ * means an older client that doesn't report it — then everything askable is
+ * a candidate and an unchanged echo of the stored value is what gets dropped.
+ * The echo rule applies either way: re-submitting an unchanged value for a
+ * field that isn't missing is a confirmation, not an answer, and needs no
+ * check. A field in `missing` is never treated as an echo — confirming a
+ * stale classification is exactly how its season gets re-stamped.
+ *
+ * Trusting `rendered` lets a member skip a question by claiming they weren't
+ * shown it. That's harmless by construction: the only thing skipped is a
+ * self-report, which stays unanswered — ineligible, and asked again next time.
+ */
+export function planCheckIn(input: {
+  user: CheckInProfile;
+  event: { audience: Audience };
+  config: GetMissingFieldsConfig;
+  answers: unknown;
+  rendered: readonly unknown[] | null;
+}): CheckInPlan {
+  const { user } = input;
+  const missing = getMissingFields(user, input.event, input.config);
+  const missingSet = new Set<RenderedFieldKey>(missing);
+  const askable = askableFields(user.role, input.event);
+  const shown = input.rendered === null ? null : new Set(input.rendered.filter(isRenderedFieldKey).filter((k) => askable.has(k)));
+  const raw: Record<string, unknown> =
+    input.answers !== null && typeof input.answers === "object" && !Array.isArray(input.answers)
+      ? (input.answers as Record<string, unknown>)
+      : {};
+
+  const accepted = new Set<RenderedFieldKey>();
+  for (const field of askable) {
+    if (shown && !shown.has(field)) continue;
+    const present = PAYLOAD_KEYS_BY_FIELD[field].filter((k) => raw[k] !== undefined);
+    if (present.length === 0) continue;
+    if (!missingSet.has(field) && present.every((k) => echoesStored(k, raw[k], user))) continue;
+    accepted.add(field);
+  }
+
+  const answers: Record<string, unknown> = {};
+  const kept = new Set<string>();
+  for (const field of accepted) {
+    for (const key of PAYLOAD_KEYS_BY_FIELD[field]) {
+      if (raw[key] === undefined) continue;
+      answers[key] = raw[key];
+      kept.add(key);
+    }
+  }
+  // The schema requires a name on every submission; one that wasn't shown is
+  // the name on file, never whatever a stale page echoed.
+  if (!accepted.has("firstName")) answers.firstName = user.firstName;
+  if (!accepted.has("lastName")) answers.lastName = user.lastName;
+
+  const required = new Set(missing.filter((f) => !shown || shown.has(f)));
+  return {
+    missing,
+    accepted,
+    required,
+    requiredButNotRendered: shown ? missing.filter((f) => !shown.has(f)) : [],
+    dropped: Object.keys(raw).filter((k) => !kept.has(k)),
+    answers,
+  };
 }

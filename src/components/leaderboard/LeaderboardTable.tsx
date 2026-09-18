@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { inputClass } from "@/components/ui/Field";
 import EmptyState from "@/components/ui/EmptyState";
+import { displayTotal } from "@/lib/points";
 import type { PointBreakdown, Standing } from "@/lib/types";
 
 type StandingWithBreakdown = Standing & { breakdown: PointBreakdown };
@@ -20,6 +21,7 @@ function BreakdownDetail({ breakdown }: { breakdown: PointBreakdown }) {
     { label: "Game bonuses", value: breakdown.gameBonus },
     { label: "Monthly champion", value: breakdown.monthlyChampionBonus },
     { label: "Manual bonus", value: breakdown.manualBonus },
+    { label: "Adjustments", value: breakdown.adjustments },
   ].filter((l) => l.value !== 0);
 
   if (lines.length === 0) return null;
@@ -49,7 +51,10 @@ function Row({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const share = leaderPoints > 0 ? Math.max(0, Math.min(1, s.points / leaderPoints)) : 0;
+  // Rank and order come from the TRUE totals; the number shown never goes
+  // below 0 (lib/points.ts displayTotal) — a public "-6" reads as a bug.
+  const shown = displayTotal(s.points);
+  const share = leaderPoints > 0 ? Math.max(0, Math.min(1, shown / leaderPoints)) : 0;
   const top3 = s.rank <= 3;
 
   return (
@@ -72,7 +77,7 @@ function Row({
             <span className="numeric shrink-0 text-xs text-muted">{s.events} ev</span>
           </div>
         </div>
-        <span className="numeric w-12 shrink-0 text-right text-base font-semibold text-foreground">{s.points}</span>
+        <span className="numeric w-12 shrink-0 text-right text-base font-semibold text-foreground">{shown}</span>
       </button>
       {expanded ? <BreakdownDetail breakdown={s.breakdown} /> : null}
     </div>
@@ -88,7 +93,7 @@ export default function LeaderboardTable({
 }) {
   const [search, setSearch] = useState("");
   const [expandedEmail, setExpandedEmail] = useState<string | null>(null);
-  const leaderPoints = standings[0]?.points ?? 0;
+  const leaderPoints = displayTotal(standings[0]?.points ?? 0);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

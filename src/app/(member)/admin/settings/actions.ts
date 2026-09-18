@@ -5,7 +5,7 @@ import { normalizeEmail } from "@/lib/email";
 import { configKeyFor } from "@/lib/features";
 import { AppError } from "@/lib/errors";
 import { codeFromName, serializeHouses, type House } from "@/lib/houses";
-import { DEFAULT_LEADERBOARD_DISCLAIMER, DEFAULT_NATIONAL_MEMBERSHIP_URL, setConfigValue } from "@/lib/repo";
+import { DEFAULT_LEADERBOARD_DISCLAIMER, DEFAULT_NATIONAL_MEMBERSHIP_URL, setConfigValue, setTrashRetentionDays } from "@/lib/repo";
 import { requireAdmin } from "@/lib/session";
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -113,6 +113,20 @@ export async function updateExternalLinksAction(_prevState: SettingsState, formD
       setConfigValue(orgId, "NATIONAL_MEMBERSHIP_URL", nationalMembershipUrl, session.user.email),
     ]);
     revalidatePath("/admin/settings");
+    return { error: null };
+  } catch (err) {
+    if (err instanceof AppError) return { error: err.message };
+    throw err;
+  }
+}
+
+/** Config.TRASH_RETENTION_DAYS — see lib/repo.ts setTrashRetentionDays, which re-dates everything already in the trash in the same transaction. */
+export async function updateTrashRetentionAction(_prevState: SettingsState, formData: FormData): Promise<SettingsState> {
+  const session = await requireAdmin();
+  try {
+    await setTrashRetentionDays(session.user.orgId, Number(formData.get("trashRetentionDays")), session.user.email);
+    revalidatePath("/admin/settings");
+    revalidatePath("/admin/trash");
     return { error: null };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };

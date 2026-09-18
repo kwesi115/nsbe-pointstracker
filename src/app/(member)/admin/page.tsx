@@ -1,17 +1,30 @@
 import { guardAdminPage } from "@/lib/access-guards";
 import AccessDenied from "./_components/AccessDenied";
 import { ShieldAlert } from "lucide-react";
+import { after } from "next/server";
 import AdminNav from "@/components/admin/AdminNav";
 import EventsBoard from "@/components/admin/EventsBoard";
 import Button from "@/components/ui/Button";
 import { getEventCodeAlertState } from "@/lib/rate-limit";
-import { getEventsWithStats } from "@/lib/repo";
+import { getEventsWithStats, runTrashSweep } from "@/lib/repo";
 
 export default async function AdminEventsPage() {
   const guard = await guardAdminPage({ level: "eboard" });
   if (!guard.ok) return <AccessDenied denied={guard} />;
   const session = guard.session;
-  const events = await getEventsWithStats(session.user.orgId);
+  const orgId = session.user.orgId;
+  // The trash bin's lazy expiry — there is no cron in this project. Runs after
+  // the response so a sweep never slows this page down, and at most once an
+  // hour however many officers load it (runTrashSweep claims the slot
+  // atomically). A failure is logged, never shown: this page isn't about the trash.
+  after(async () => {
+    try {
+      await runTrashSweep(orgId);
+    } catch (err) {
+      console.error("[trash] lazy sweep failed", err);
+    }
+  });
+  const events = await getEventsWithStats(orgId);
   const eventsWithAlerts = events.map((e) => ({ ...e, codeAlert: getEventCodeAlertState(e.eventId) }));
   const suspiciousEvents = eventsWithAlerts.filter((e) => e.codeAlert.suspicious);
 
@@ -38,7 +51,11 @@ export default async function AdminEventsPage() {
         </div>
       ) : null}
 
-      <EventsBoard initialEvents={eventsWithAlerts} exportsEnabled={guard.access.features.exports} />
+      <EventsBoard
+        initialEvents={eventsWithAlerts}
+        exportsEnabled={guard.access.features.exports}
+        canDelete={guard.access.role === "admin"}
+      />
     </main>
   );
 }

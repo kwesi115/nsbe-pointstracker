@@ -17,7 +17,10 @@ export type ErrorCode =
   // prisma/schema.prisma model RequestClaim). Not a failure of the caller's
   // intent: the first request did the work, and this one deliberately did
   // nothing rather than issue a second credential.
-  | "DUPLICATE_REQUEST";
+  | "DUPLICATE_REQUEST"
+  // Permanent deletion refuses to run with nowhere to put the snapshot it
+  // takes first — see lib/storage.ts backupStorageStatus.
+  | "BACKUP_UNAVAILABLE";
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,
@@ -33,6 +36,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   BAD_CODE: 403,
   LAST_ADMIN: 409,
   DUPLICATE_REQUEST: 409,
+  BACKUP_UNAVAILABLE: 503,
 };
 
 export interface AppErrorOptions {

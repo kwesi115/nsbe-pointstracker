@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Role as DbRole } from "@/generated/prisma/enums";
 import { currentCode } from "./code";
 import { AppError } from "./errors";
@@ -20,6 +20,10 @@ import {
   redeemJoinCodeForSignup,
   registerGuest,
 } from "./repo";
+
+// Bcrypt at cost 12 per join code and per signup — comfortably under 5s alone, but not under the
+// full suite's parallel database load. Same allowance as src/auth.test.ts.
+vi.setConfig({ testTimeout: 30_000 });
 
 let createdOrgIds: string[] = [];
 

@@ -18,6 +18,7 @@ import type { House } from "@/lib/houses";
 import type { MemberFilters, MembersPage, MemberWithStats } from "@/lib/repo";
 import { loadMembersPageAction } from "@/app/(member)/admin/members/pagination-actions";
 import AccountStateBadge from "./AccountStateBadge";
+import AdjustPointsDialog from "./AdjustPointsDialog";
 import ApproveRejectButtons from "./ApproveRejectButtons";
 import EboardPositionCell from "./EboardPositionCell";
 import HouseCell from "./HouseCell";
@@ -87,6 +88,7 @@ export default function MembersTable({
   filters,
   houses,
   exportsEnabled,
+  canAdjust,
 }: {
   /** The first page, server-rendered. Subsequent pages are fetched, never preloaded and hidden. */
   initialPage: MembersPage;
@@ -97,12 +99,15 @@ export default function MembersTable({
   houses: House[];
   /** Config.EXPORTS_ENABLED — hides "Export selected", whose endpoint is gated by the same flag. See lib/features.ts. */
   exportsEnabled: boolean;
+  /** Holds points_write — shows the bulk "Adjust points". The action re-checks. */
+  canAdjust: boolean;
 }) {
   const [members, setMembers] = useState<MemberWithStats[]>(initialPage.rows);
   const [cursor, setCursor] = useState<string | null>(initialPage.nextCursor);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const [loadingMore, startLoadMore] = useTransition();
+  const [adjusting, setAdjusting] = useState(false);
   const { show } = useToast();
 
   // A filter or search change re-renders the server component with a fresh
@@ -208,6 +213,11 @@ export default function MembersTable({
             >
               Demote to General
             </Button>
+            {canAdjust ? (
+              <Button type="button" variant="secondary" disabled={isPending} onClick={() => setAdjusting(true)}>
+                Adjust points
+              </Button>
+            ) : null}
             {exportsEnabled ? (
               <Button type="button" onClick={exportSelected} disabled={isPending}>
                 Export selected
@@ -216,6 +226,17 @@ export default function MembersTable({
           </div>
         </div>
       ) : null}
+
+      <AdjustPointsDialog
+        open={adjusting}
+        emails={Array.from(selected)}
+        onClose={() => setAdjusting(false)}
+        onSuccess={(adjusted) => {
+          show(`Adjusted ${adjusted} member(s)`);
+          setAdjusting(false);
+          setSelected(new Set());
+        }}
+      />
 
       <div className="overflow-x-auto rounded-xl border border-border bg-surface">
         <table className="w-full border-collapse text-sm">
@@ -267,7 +288,8 @@ export default function MembersTable({
                   <td className={tdClass}>{m.major || <EmptyValue />}</td>
                   <td className={tdClass}>{m.tshirtSize || <EmptyValue />}</td>
                   <td className={tdClass}>{m.nsbeMembershipId || <EmptyValue />}</td>
-                  <td className={`${tdClass} numeric`}>{m.points}</td>
+                  {/* The TRUE total — an admin sees a negative as negative (members see 0). */}
+                  <td className={`${tdClass} numeric ${m.points < 0 ? "text-alert" : ""}`}>{m.points}</td>
                   <td className={`${tdClass} numeric`}>{m.events}</td>
                   <td className={tdClass}>
                     <StatusIcon value={m.eligible} labels={{ yes: "Eligible", no: "Ineligible" }} />

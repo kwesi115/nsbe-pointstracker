@@ -8,7 +8,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import StatTile from "@/components/ui/StatTile";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { formatDate } from "@/lib/format";
-import { eboardAwardFor, isEboardOrAdmin, isEligible, memberPointsFor } from "@/lib/points";
+import { awardCountsForSeason, displayTotal, eboardAwardFor, isEboardOrAdmin, isEligible, memberPointsFor } from "@/lib/points";
 import {
   getActiveNsbeWeekProgress,
   getConfigValue,
@@ -46,7 +46,14 @@ function NsbeWeekBanner({ progress }: { progress: NsbeWeekProgress }) {
   );
 }
 
-/** Zero-value lines are hidden — except NSBE Week during an active (incomplete) group, which shows progress instead of a number that would otherwise misleadingly read 0. */
+/**
+ * Zero-value lines are hidden — except NSBE Week during an active (incomplete)
+ * group, which shows progress instead of a number that would otherwise
+ * misleadingly read 0. Every line is the true value, adjustments included; the
+ * season total is clamped at 0 (lib/points.ts displayTotal), with a line saying
+ * so when the clamp is doing something, so the lines and the total never
+ * silently disagree.
+ */
 function BreakdownCard({ breakdown }: { breakdown: PointBreakdown }) {
   const rows: Array<{ label: string; value: number }> = [
     { label: "Event points", value: breakdown.eventPoints },
@@ -54,6 +61,7 @@ function BreakdownCard({ breakdown }: { breakdown: PointBreakdown }) {
     { label: "Game bonuses", value: breakdown.gameBonus },
     { label: "Monthly champion", value: breakdown.monthlyChampionBonus },
     { label: "Manual bonus", value: breakdown.manualBonus },
+    { label: "Adjustments", value: breakdown.adjustments },
   ].filter((r) => r.value !== 0);
 
   return (
@@ -69,9 +77,12 @@ function BreakdownCard({ breakdown }: { breakdown: PointBreakdown }) {
           ))}
           <div className="mt-1 flex items-center justify-between border-t border-border pt-2">
             <dt className="font-semibold text-foreground">Season total</dt>
-            <dd className="numeric text-lg font-bold text-signal-strong">{breakdown.total}</dd>
+            <dd className="numeric text-lg font-bold text-signal-strong">{displayTotal(breakdown.total)}</dd>
           </div>
         </dl>
+        {breakdown.total < 0 ? (
+          <p className="mt-2 text-xs text-muted">Totals don&apos;t go below 0 — the lines above add up to {breakdown.total}.</p>
+        ) : null}
       </Card>
     </section>
   );
@@ -118,7 +129,8 @@ export default async function DashboardPage() {
   // never the frozen pointsAwarded) and bonus awards, each landing at its own
   // awardedAt so a +5 jump shows up exactly when it was granted, not
   // backdated to a check-in.
-  const activeAwards = awards.filter((a) => a.revokedAt === null);
+  // Same rule memberTotal applies: revoked awards and other seasons' adjustments don't count.
+  const activeAwards = awards.filter((a) => a.revokedAt === null && awardCountsForSeason(a, season));
   const timeline = [
     ...history.map((row) => ({
       date: row.timestamp ?? new Date(),
@@ -132,7 +144,8 @@ export default async function DashboardPage() {
   let running = 0;
   for (const entry of timeline) {
     running += entry.points;
-    chartData.push({ date: entry.date.toISOString(), points: running, isBonus: entry.isBonus });
+    // Member-facing, so never plotted below 0 — same clamp as the total.
+    chartData.push({ date: entry.date.toISOString(), points: displayTotal(running), isBonus: entry.isBonus });
   }
 
   return (
@@ -145,7 +158,7 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {eligible ? (
           <>
-            <StatTile label="Season points" value={summary.points} accent="signal" />
+            <StatTile label="Season points" value={displayTotal(summary.points)} accent="signal" />
             <StatTile label="Rank" value={summary.rank ? `#${summary.rank}` : "—"} sub={summary.rank ? `of ${summary.totalRanked}` : undefined} />
             <StatTile label="Events attended" value={history.length} />
             {pointsBehind !== null ? (

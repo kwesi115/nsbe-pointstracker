@@ -5,10 +5,14 @@
  */
 
 import ExcelJS from "exceljs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_LEADERBOARD_DISCLAIMER, getConfigValue } from "@/lib/repo";
 import { buildWorkbookExport } from "./workbook";
+
+// A full season workbook built from the database — comfortably under 5s alone, but not under the
+// full suite's parallel database load. Same allowance as src/auth.test.ts.
+vi.setConfig({ testTimeout: 30_000 });
 
 const FORBIDDEN_SUBSTRINGS = ["passwordhash", "verificationtoken", "joincode", "$2a$", "$2b$"]; // bcrypt hash prefixes too
 

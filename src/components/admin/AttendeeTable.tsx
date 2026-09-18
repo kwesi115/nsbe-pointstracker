@@ -48,6 +48,7 @@ export default function AttendeeTable({
   const [cursor, setCursor] = useState<string | null>(initialPage.nextCursor);
   const [total, setTotal] = useState(initialPage.total);
   const [totalPoints, setTotalPoints] = useState(initialPage.totalPoints);
+  const [trashedCount, setTrashedCount] = useState(initialPage.trashedCount);
   const [q, setQ] = useState("");
   const [isPending, startTransition] = useTransition();
   const [removing, setRemoving] = useState<{ row: AttendeeRow; impact: RemoveRegistrationImpact | null } | null>(null);
@@ -67,6 +68,7 @@ export default function AttendeeTable({
     setCursor(initialPage.nextCursor);
     setTotal(initialPage.total);
     setTotalPoints(initialPage.totalPoints);
+    setTrashedCount(initialPage.trashedCount);
     setQ("");
   }
 
@@ -75,6 +77,7 @@ export default function AttendeeTable({
     setCursor(page.nextCursor);
     setTotal(page.total);
     setTotalPoints(page.totalPoints);
+    setTrashedCount(page.trashedCount);
   }
 
   function runSearch(value: string) {
@@ -133,6 +136,8 @@ export default function AttendeeTable({
         <p className="numeric text-sm text-muted">
           <span className="font-semibold text-foreground">{total}</span> checked in ·{" "}
           <span className="font-semibold text-foreground">{totalPoints}</span> points awarded
+          {/* Still in the event's headcount on the attendance list — trashing hides a person, it doesn't un-happen their attendance. */}
+          {trashedCount > 0 ? ` · ${trashedCount} more in the trash, not listed` : null}
         </p>
         <label className="flex min-w-56 flex-col gap-1 text-xs font-medium text-muted">
           Search this event

@@ -42,18 +42,79 @@ database.
    (with Prisma's `?schema=` query param stripped first — `pg_dump`/`psql`
    don't understand it; see `scripts/pg-connection.ts`).
 
-**Measured elapsed time** (this deployment's dev database — 61 users, 2 orgs,
-a modest seeded dataset; larger production data will take longer,
-proportionally):
+**Measured elapsed time — production, 2026-09-15** (Neon, PostgreSQL 18.6;
+183 users, 1 org, 1,502 AdminLog rows, 209 registrations):
 
-- `pg_dump` + gzip: **941 ms** (178 KB raw → 40 KB gzipped)
-- Restore (gunzip + `psql`) into a fresh scratch database: **1,727 ms**
+- `pg_dump` (18.6, direct endpoint, `--no-owner --no-privileges`) + gzip:
+  **5,402 ms** (433 KB raw → 112 KB gzipped). Most of that is the network
+  round-trip to Neon plus `docker run` startup, not dump work.
+- Restore (gunzip + `psql`) into a fresh, empty PostgreSQL 18 scratch
+  database: **1,435 ms** (13 ms gunzip + 1,422 ms `psql`), exit 0, zero
+  `ERROR` lines.
 
-Measured by actually running both steps against a real Postgres instance
-(via the project's local `nsbe-postgres` Docker container) into a
-purpose-created scratch database (`nsbe_pointstracker_restore_verify`),
-verifying afterward that `User` and `Org` row counts in the restored database
-exactly matched the source. Not estimated.
+Completeness was verified per table by primary key, not just by count: for
+all 13 data tables, every row in the restored database exists in production,
+and every production row missing from the restore was created after the
+dump's newest row (production was taking live writes during the test). Not
+estimated.
+
+**End-to-end through R2, same day.** `npm run backup` was then run for real
+against production (Linux container, `pg_dump` 18.6, `BACKUP_STORAGE_DRIVER=s3`):
+
+- Whole script — dump, gzip, upload, prune, AdminLog write: **5,349 ms**.
+- It produced `db-backups/nsbe-howard-nsbe-2026-09-15T22-50-49-739Z.sql.gz`,
+  **117,247 bytes** gzipped (450,621 raw), and logged a matching `db_backup`
+  AdminLog row.
+- Restoring **that R2 object**: download 110 ms + gunzip 6 ms + `psql` 983 ms
+  = **1,099 ms** (plus ~4.8 s to start the empty scratch container, excluded).
+  Completeness re-verified by primary key across all 13 tables.
+
+Caveats: both restores went into a throwaway `postgres:18-alpine` container
+rather than through `npm run restore`, because the machine running this had no
+Postgres client. Earlier dev-database figures (61 users: 941 ms dump, 1,727 ms
+restore) are superseded by these.
+
+**Retention pruning was verified against the live bucket**, not just in unit
+tests: 105 synthetic dated objects plus the real backup were reduced to 20 —
+the 7 most recent consecutive days, 12 distinct months, and the weekly
+buckets in between. A second pass deleted nothing, and the real backup
+survived. The synthetic objects were then removed.
+
+**`sslmode=verify-full` needs a CA file for `pg_dump`/`psql`.** Unlike
+node-postgres, libpq looks for `~/.postgresql/root.crt` and aborts with
+"root certificate file ... does not exist" when it is missing. On a stock CI
+runner, either copy the system bundle
+(`cp /etc/ssl/certs/ca-certificates.crt ~/.postgresql/root.crt`) or put
+`sslrootcert=system` in the connection string.
+
+**`pg_dump` must be ≥ the server's major version.** Production is 18.x.
+`pg_dump` 16, which is what `apt-get install postgresql-client` gives on
+`ubuntu-latest`, aborts with "server version mismatch". Any machine that
+runs a backup or restore needs a PostgreSQL 18 client.
+
+### Known issues (as of 2026-09-15)
+
+- **`.github/workflows/backup.yml` has failed on every scheduled run since it
+  was added, and still will.** Three separate causes: it installs `pg_dump`
+  16, which cannot dump the 18.6 server; it has no `~/.postgresql/root.crt`
+  for `sslmode=verify-full`; and production had no
+  `db_backup`/`db_backup_failed` AdminLog rows at all, which suggests the job
+  fails before reaching the database (check the `DATABASE_URL` repo secret).
+  A manual local run now succeeds, so the R2 secrets are the only part
+  confirmed good — and only if the repo secrets hold the same values.
+- **A season snapshot for production throws `Worksheet name already exists`.**
+  `addReportSheet` truncates `Responses_{slug}` to Excel's 31-character limit,
+  and the events `retest-prod-event-2026` and `retest-prod-event-2026-2`
+  collide. This breaks both the manual snapshot button and the automatic
+  snapshot before a bulk import or category edit.
+- **`npm test` can delete production snapshots.** Tests load `.env`, which now
+  selects the `s3` driver, and the dev database's org id (`howard-nsbe`) is
+  the same as production's, so `snapshot.test.ts`'s cleanup deletes everything
+  under `snapshots/howard-nsbe/`. Run tests with `BACKUP_STORAGE_DRIVER=local`
+  until the test setup pins this itself.
+- Resolved 2026-09-15: `BACKUP_S3_ACCESS_KEY_ID` had been set to the secret
+  key's value (64 chars; R2 access key IDs are 32), so every R2 call failed
+  with `InvalidArgument`.
 
 ## Layer 2 — restoring from a season snapshot workbook
 

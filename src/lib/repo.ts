@@ -52,15 +52,17 @@ import type {
 import { verifyCode } from "./code";
 import { AppError } from "./errors";
 import { claimState, type ClaimState } from "./claim-state";
-import { CORE_FORM_VERSION, getMissingFields, houseSelfVerifies, validateCoreAnswers, validateReducedCoreAnswers } from "./core-form";
+import { CORE_FORM_VERSION, houseSelfVerifies, planCheckIn, validateCoreAnswers, type CoreFormAnswers } from "./core-form";
+import { logCheckInRejection, logRequiredButNotRendered } from "./checkin-diagnostics";
 import { missingSignupSteps, signupIsComplete, type StepKey } from "./signup";
 import { validateAnswers, serializeAnswers } from "./forms";
-import { memberDisplayName } from "./format";
+import { formatMonthKey, formatSigned, memberDisplayName } from "./format";
 import { parseHouses, type House } from "./houses";
 import { generateSetupCode, hashPassword, verifyPassword } from "./passwords";
 import { openSetupCode, sealSetupCode } from "./setup-code";
 import { hashIp, isEventCodeLocked, recordEventCodeFailure } from "./rate-limit";
 import {
+  awardCountsForSeason,
   computeEboardStandings,
   computeStandings,
   computeStandingsWithBreakdowns,
@@ -73,7 +75,9 @@ import {
   isMonthOver,
   memberPointsFor,
   memberTotal,
+  monthKeyOf,
   monthlyChampions,
+  projectStandings,
   rankWithLiveSelf,
   standingsCacheTag,
   summaryFor,
@@ -81,6 +85,7 @@ import {
   type GroupBonusInput,
 } from "./points";
 import { prisma } from "./prisma";
+import { backupStorage, backupStorageStatus, storage, type BackupStorageStatus } from "./storage";
 import type {
   AccountState,
   AdminLogEntry,
@@ -115,6 +120,77 @@ import type {
 
 type Tx = Prisma.TransactionClient;
 
+// ---------------------------------------------------------------------------
+// The trash bin's read filter.
+//
+// A trashed User or Event (deletedAt set — see prisma/schema.prisma) is hidden
+// from EVERY read in this module unless the caller passes `includeDeleted`,
+// which only the trash views and the purge path do. The filter is written out
+// at each query rather than applied by a Prisma extension, so a reader can see
+// it — and so a query that deliberately skips it has to say why in a comment.
+//
+// The part that is easy to miss: Registration has no deletedAt of its own.
+// A trashed event's registrations are KEPT (restoring the event restores every
+// count exactly), so any read over Registration must join to Event and filter
+// there — liveRegistrationWhere below — or a trashed event keeps counting.
+// ---------------------------------------------------------------------------
+
+/** Spread into any User or Event `where`. */
+const LIVE = { deletedAt: null } as const;
+
+/** Options for the few reads that the trash views need to see past the filter. */
+export interface IncludeDeleted {
+  includeDeleted?: boolean;
+}
+
+/**
+ * A registration counts only when its EVENT is live and its MEMBER is live.
+ * `includeTrashedMembers` drops the second half for the one read that wants it
+ * (the Monthly Champion calculation — see calculateMonthlyChampions); nothing
+ * ever drops the first.
+ */
+function liveRegistrationWhere(orgId: string, options: { includeTrashedMembers?: boolean } = {}): Prisma.RegistrationWhereInput {
+  return {
+    event: { orgId, ...LIVE },
+    ...(options.includeTrashedMembers ? {} : { user: LIVE }),
+  };
+}
+
+/**
+ * An award counts only while its member is live and, for an award tied to an
+ * event (a game bonus), while that event is live too — trashing an event
+ * removes everything that event contributed. An adjustment's relatedEventId is
+ * informational and deliberately NOT part of this: an adjustment is a
+ * correction about the member, and stays in force when a related event is
+ * trashed.
+ */
+function liveAwardWhere(orgId: string): Prisma.PointAwardWhereInput {
+  return { orgId, user: LIVE, OR: [{ eventId: null }, { event: LIVE }] };
+}
+
+/**
+ * tx.user.update for a write that must not land on a trashed account: the
+ * caller spreads LIVE into its unique `where`, and a trashed (or missing) row
+ * becomes NOT_FOUND rather than an unhandled P2025. Server actions already
+ * resolve their target through a filtered read, so this is the backstop for a
+ * crafted request naming a trashed member's email directly.
+ */
+function updateLiveUser(tx: Tx, args: Prisma.UserUpdateArgs): Promise<UserModel> {
+  return orNotFound(tx.user.update(args) as Promise<UserModel>, "Member not found");
+}
+
+/** Maps Prisma's "record to update not found" (a trashed or missing row under a LIVE-filtered unique where) to the NOT_FOUND every caller already handles. */
+async function orNotFound<T>(work: Promise<T>, message: string): Promise<T> {
+  try {
+    return await work;
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+      throw new AppError("NOT_FOUND", message);
+    }
+    throw err;
+  }
+}
+
 const MAX_EXTRA_QUESTIONS_HARD_CAP = 5;
 
 // ---------------------------------------------------------------------------
@@ -141,6 +217,8 @@ function permissionToDb(p: PermissionName): DbPermission {
       return DbPermission.VERIFICATIONS_WRITE;
     case "attendance_write":
       return DbPermission.ATTENDANCE_WRITE;
+    case "points_write":
+      return DbPermission.POINTS_WRITE;
   }
 }
 
@@ -150,6 +228,8 @@ function permissionFromDb(p: DbPermission): PermissionName {
       return "attendance_write";
     case DbPermission.VERIFICATIONS_WRITE:
       return "verifications_write";
+    case DbPermission.POINTS_WRITE:
+      return "points_write";
   }
 }
 
@@ -213,6 +293,7 @@ function groupKindToDb(_k: GroupKind): DbGroupKind {
 function awardKindFromDb(k: DbAwardKind): AwardKind {
   if (k === DbAwardKind.GAME_COMPETITION) return "game_competition";
   if (k === DbAwardKind.MONTHLY_CHAMPION) return "monthly_champion";
+  if (k === DbAwardKind.ADJUSTMENT) return "adjustment";
   return "manual";
 }
 
@@ -424,6 +505,8 @@ function pointAwardToDomain(a: PointAwardModel & { user: { email: string } }): P
     revokedAt: a.revokedAt,
     revokedById: a.revokedById ?? "",
     revokeNote: a.revokeNote ?? "",
+    season: a.season,
+    relatedEventId: a.relatedEventId,
   };
 }
 
@@ -575,7 +658,7 @@ export async function grantPermission(orgId: string, email: string, permission: 
   const e = normalizeEmail(email);
   const a = normalizeEmail(actor);
   await prisma.$transaction(async (tx) => {
-    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
     if (!user) throw new AppError("NOT_FOUND", "Member not found");
     const actorUser = await tx.user.findUnique({ where: { orgId_email: { orgId, email: a } }, select: { id: true } });
 
@@ -593,7 +676,7 @@ export async function revokePermission(orgId: string, email: string, permission:
   const e = normalizeEmail(email);
   const a = normalizeEmail(actor);
   await prisma.$transaction(async (tx) => {
-    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
     if (!user) throw new AppError("NOT_FOUND", "Member not found");
     const existing = await tx.permissionGrant.findUnique({
       where: { orgId_userId_permission: { orgId, userId: user.id, permission: permissionToDb(permission) } },
@@ -714,33 +797,37 @@ export async function getActiveOrgs(): Promise<Org[]> {
 // Read accessors
 // ---------------------------------------------------------------------------
 
-export async function getMembers(orgId: string): Promise<Member[]> {
-  const users = await prisma.user.findMany({ where: { orgId }, orderBy: { lastName: "asc" } });
+export async function getMembers(orgId: string, options: IncludeDeleted = {}): Promise<Member[]> {
+  const users = await prisma.user.findMany({
+    where: { orgId, ...(options.includeDeleted ? {} : LIVE) },
+    orderBy: { lastName: "asc" },
+  });
   return users.map(userToMember);
 }
 
 export async function getMember(orgId: string, email: string): Promise<Member | null> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
   return user ? userToMember(user) : null;
 }
 
-/** Keyed by the internal id (cuid) — used for /admin/members/[id], consistent with /events/[id]. */
+/** Keyed by the internal id (cuid) — used for /admin/members/[id], consistent with /events/[id]. A trashed member 404s there; the trash bin is where they live until restored. */
 export async function getMemberById(orgId: string, id: string): Promise<Member | null> {
-  const user = await prisma.user.findFirst({ where: { id, orgId } });
+  const user = await prisma.user.findFirst({ where: { id, orgId, ...LIVE } });
   return user ? userToMember(user) : null;
 }
 
+/** A trashed account reads as "general" — the no-access default — so every requireAdmin/requireEboard re-check refuses it even on a JWT minted before it was trashed. */
 export async function getRole(orgId: string, email: string): Promise<Role> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { role: true } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE }, select: { role: true } });
   return user ? roleFromDb(user.role) : "general";
 }
 
 /** The internal id behind an email — needed wherever a caller only has a session email but must write a foreign key (e.g. UploadedFile.userId). */
 export async function getUserId(orgId: string, email: string): Promise<string | null> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { id: true } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE }, select: { id: true } });
   return user?.id ?? null;
 }
 
@@ -764,7 +851,10 @@ export async function getUserId(orgId: string, email: string): Promise<string | 
 export async function getSessionUser(orgId: string, email: string): Promise<SessionUser | null> {
   const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({
-    where: { orgId_email: { orgId, email: e } },
+    // A trashed account has no session: null here makes src/auth.ts's session
+    // callback sign the request out, so trashing someone ends a session they
+    // already had open, on its very next request.
+    where: { orgId_email: { orgId, email: e }, ...LIVE },
     select: {
       id: true,
       email: true,
@@ -791,10 +881,15 @@ export async function getSessionUser(orgId: string, email: string): Promise<Sess
  * The ONLY function that returns passwordHash. Everything else that reads
  * Users (getMembers, getMember, ...) maps through userToMember(), which never
  * touches it.
+ *
+ * A trashed account returns null — to src/auth.ts authorize() exactly the
+ * same as no account at all, so sign-in fails with the generic message and
+ * the same dummy bcrypt cost, and never reveals that the account exists but
+ * was deleted.
  */
 export async function getAuthRecord(orgId: string, email: string): Promise<AuthRecord | null> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
   return user ? userToAuthRecord(user) : null;
 }
 
@@ -854,18 +949,26 @@ export async function isLoginEmailAllowed(orgId: string, email: string): Promise
   return e.endsWith(d) || allowlist.includes(e);
 }
 
-export async function getEvents(orgId: string): Promise<Event[]> {
-  const rows = await prisma.event.findMany({ where: { orgId }, include: EVENT_INCLUDE, orderBy: { createdAt: "desc" } });
+export async function getEvents(orgId: string, options: IncludeDeleted = {}): Promise<Event[]> {
+  const rows = await prisma.event.findMany({
+    where: { orgId, ...(options.includeDeleted ? {} : LIVE) },
+    include: EVENT_INCLUDE,
+    orderBy: { createdAt: "desc" },
+  });
   return rows.map(eventToDomain);
 }
 
+/** A trashed event is not found — its member page, check-in, edit and export routes all 404 until it is restored. */
 export async function getEvent(orgId: string, eventId: string): Promise<Event | null> {
-  const row = await prisma.event.findFirst({ where: { id: eventId, orgId }, include: EVENT_INCLUDE });
+  const row = await prisma.event.findFirst({ where: { id: eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
   return row ? eventToDomain(row) : null;
 }
 
 export async function getOpenEvents(orgId: string, now: Date): Promise<Event[]> {
-  const rows = await prisma.event.findMany({ where: { orgId, status: DbEventStatus.SCHEDULED }, include: EVENT_INCLUDE });
+  const rows = await prisma.event.findMany({
+    where: { orgId, status: DbEventStatus.SCHEDULED, ...LIVE },
+    include: EVENT_INCLUDE,
+  });
   return rows.map(eventToDomain).filter((e) => isOpen(e, now));
 }
 
@@ -876,16 +979,25 @@ export async function getOpenGuestEvents(orgId: string, now: Date): Promise<Even
 
 export async function getFormFields(orgId: string, eventId: string): Promise<FormField[]> {
   const rows = await prisma.formField.findMany({
-    where: { eventId, event: { orgId } },
+    where: { eventId, event: { orgId, ...LIVE } },
     orderBy: { order: "asc" },
   });
   return rows.map(formFieldToDomain);
 }
 
-/** Single joined query (Registration -> User, Event -> Category) — never one query per row. */
-export async function getAttendance(orgId: string): Promise<AttendanceRecord[]> {
+/**
+ * Single joined query (Registration -> User, Event -> Category) — never one
+ * query per row. The attendance log EVERY standings computation reads, so it
+ * is where a trashed event stops counting: registrations for a trashed event
+ * never leave this function. A trashed member's registrations don't either,
+ * unless `includeTrashedMembers` — see liveRegistrationWhere.
+ */
+export async function getAttendance(
+  orgId: string,
+  options: { includeTrashedMembers?: boolean } = {},
+): Promise<AttendanceRecord[]> {
   const rows = await prisma.registration.findMany({
-    where: { event: { orgId } },
+    where: liveRegistrationWhere(orgId, options),
     include: REGISTRATION_ATTENDANCE_INCLUDE,
     orderBy: { createdAt: "desc" },
   });
@@ -894,27 +1006,31 @@ export async function getAttendance(orgId: string): Promise<AttendanceRecord[]> 
 
 export async function getAttendanceForEvent(orgId: string, eventId: string): Promise<AttendanceRecord[]> {
   const rows = await prisma.registration.findMany({
-    where: { eventId, event: { orgId } },
+    where: { eventId, ...liveRegistrationWhere(orgId) },
     include: REGISTRATION_ATTENDANCE_INCLUDE,
     orderBy: { createdAt: "desc" },
   });
   return rows.map(registrationToAttendance);
 }
 
+/** Every live award (see liveAwardWhere) — revoked ones included, since the awards page lists those too; memberTotal drops them. */
 export async function getPointAwards(orgId: string): Promise<PointAward[]> {
   const rows = await prisma.pointAward.findMany({
-    where: { orgId },
+    where: liveAwardWhere(orgId),
     include: { user: { select: { email: true } } },
     orderBy: { awardedAt: "desc" },
   });
   return rows.map(pointAwardToDomain);
 }
 
+/** The include every bonus-math EventGroup read uses: the group's LIVE events only — a trashed event is not part of any group's completion or tier count. */
+const GROUP_BONUS_EVENTS = { events: { where: LIVE, select: { id: true, status: true, closesAt: true } } } as const;
+
 /** Every EventGroup query used for bonus math includes this — the group's own events, just enough to decide completion and count attendance. */
 async function getGroupBonusInputs(orgId: string): Promise<GroupBonusInput[]> {
   const groups = await prisma.eventGroup.findMany({
     where: { orgId },
-    include: { events: { select: { id: true, status: true, closesAt: true } } },
+    include: GROUP_BONUS_EVENTS,
   });
   return groups.map((g) => ({
     events: g.events.map((e) => ({ eventId: e.id, status: eventStatusFromDb(e.status), closesAt: e.closesAt })),
@@ -1000,16 +1116,24 @@ export async function getStandingsWithBreakdownsForSeason(
  */
 export async function getMemberBreakdown(orgId: string, email: string): Promise<PointBreakdown> {
   const e = normalizeEmail(email);
-  const zero: PointBreakdown = { eventPoints: 0, nsbeWeekBonus: 0, gameBonus: 0, monthlyChampionBonus: 0, manualBonus: 0, total: 0 };
-  const [member, attendance, awards, groups] = await Promise.all([
+  const zero: PointBreakdown = {
+    eventPoints: 0,
+    nsbeWeekBonus: 0,
+    gameBonus: 0,
+    monthlyChampionBonus: 0,
+    manualBonus: 0,
+    adjustments: 0,
+    total: 0,
+  };
+  const [member, attendance, awards, groups, season] = await Promise.all([
     getMember(orgId, e),
     getMemberHistory(orgId, e),
-    getPointAwards(orgId),
+    getPointAwardsForUser(orgId, e),
     getGroupBonusInputs(orgId),
+    getConfigValue(orgId, "SEASON", ""),
   ]);
   if (!member) return zero;
-  const memberAwards = awards.filter((a) => a.email.toLowerCase() === e);
-  return memberTotal(member, attendance, memberAwards, groups, new Date());
+  return memberTotal(member, attendance, awards, groups, new Date(), season);
 }
 
 export async function getMemberSummary(orgId: string, email: string): Promise<MemberSummary> {
@@ -1044,7 +1168,7 @@ export async function getMemberSummaryLive(
     return { email: e, points: 0, events: 0, rank: null, totalRanked: cachedStandings.length };
   }
   const memberAwards = awards.filter((a) => a.email === e);
-  const breakdown = memberTotal(member, attendance, memberAwards, groups, new Date());
+  const breakdown = memberTotal(member, attendance, memberAwards, groups, new Date(), season);
   // Cached snapshot may or may not already contain this member's own (stale)
   // row — count everyone else once, then add self back in, rather than
   // trusting cachedStandings.length directly.
@@ -1189,11 +1313,15 @@ export async function getEboardBoardRows(orgId: string, filter?: EboardBoardFilt
   });
 }
 
-/** Filtered directly by user (via the Registration_userId_idx), not a slice of the full attendance log. */
+/**
+ * Filtered directly by user (via the Registration_userId_idx), not a slice of
+ * the full attendance log. A trashed event's registrations are left out — this
+ * is what "Events attended" on the dashboard and the member detail page count.
+ */
 export async function getMemberHistory(orgId: string, email: string): Promise<AttendanceRecord[]> {
   const e = normalizeEmail(email);
   const rows = await prisma.registration.findMany({
-    where: { user: { orgId, email: e } },
+    where: { user: { orgId, email: e, ...LIVE }, event: { orgId, ...LIVE } },
     include: REGISTRATION_ATTENDANCE_INCLUDE,
     orderBy: { createdAt: "desc" },
   });
@@ -1201,7 +1329,7 @@ export async function getMemberHistory(orgId: string, email: string): Promise<At
 }
 
 export async function getAuthRecords(orgId: string): Promise<AuthRecord[]> {
-  const users = await prisma.user.findMany({ where: { orgId } });
+  const users = await prisma.user.findMany({ where: { orgId, ...LIVE } });
   return users.map(userToAuthRecord);
 }
 
@@ -1218,10 +1346,15 @@ export interface EventWithStats extends Event {
   registrationCount: number;
 }
 
-/** One query with a _count aggregate — not one COUNT per event. */
+/**
+ * One query with a _count aggregate — not one COUNT per event. Trashed events
+ * are left out. registrationCount is the event's HEADCOUNT and deliberately
+ * still counts a trashed member's registration: trashing a person hides the
+ * person, it does not un-happen their attendance (see trashMember).
+ */
 export async function getEventsWithStats(orgId: string): Promise<EventWithStats[]> {
   const rows = await prisma.event.findMany({
-    where: { orgId },
+    where: { orgId, ...LIVE },
     include: { ...EVENT_INCLUDE, _count: { select: { registrations: true } } },
     orderBy: { createdAt: "desc" },
   });
@@ -1238,10 +1371,10 @@ export interface EventResponseRow {
   answers: Record<string, string>;
 }
 
-/** One query (Registration -> User + Answers) per event — never one query per response. */
+/** One query (Registration -> User + Answers) per event — never one query per response. Feeds the responses page and every responses export, so a trashed member's row is left out of all of them. */
 export async function getEventResponses(orgId: string, eventId: string): Promise<EventResponseRow[]> {
   const rows = await prisma.registration.findMany({
-    where: { eventId, event: { orgId } },
+    where: { eventId, ...liveRegistrationWhere(orgId) },
     include: {
       user: { select: { email: true, firstName: true, lastName: true } },
       answers: true,
@@ -1263,6 +1396,10 @@ export async function getEventResponses(orgId: string, eventId: string): Promise
  * Whether an event's schema is locked — true once even one response has been
  * submitted. Server-side gate for the form builder; a disabled control on the
  * client is UX only, never the actual security boundary.
+ *
+ * Deliberately NOT trash-filtered on the registrant: a trashed member's
+ * answers still exist (and come back on restore), so the schema they were
+ * written against stays locked.
  */
 export async function hasEventResponses(orgId: string, eventId: string): Promise<boolean> {
   const row = await prisma.registration.findFirst({ where: { eventId, event: { orgId } }, select: { id: true } });
@@ -1290,8 +1427,14 @@ export async function getAccountState(
 }
 
 export interface MemberWithStats extends Member {
-  /** Total earned regardless of eligibility — admins need the real number, unlike the member-facing dashboard. */
+  /**
+   * The TRUE season total (lib/points.ts memberTotal — event points, every
+   * bonus, and adjustments), regardless of eligibility and possibly negative:
+   * admins need the real number, unlike the member-facing surfaces, which
+   * clamp at 0 (displayTotal).
+   */
   points: number;
+  /** Registrations for LIVE events only — a trashed event drops out of this count until restored. */
   events: number;
   accountState: AccountState;
   eligible: boolean;
@@ -1325,7 +1468,7 @@ export async function resolveVerifierNames(
     ids.length === 0
       ? []
       : await prisma.user.findMany({
-          where: { orgId, id: { in: ids } },
+          where: { orgId, id: { in: ids }, ...LIVE },
           select: { id: true, firstName: true, lastName: true, email: true },
         });
   const byId = new Map(rows.map((r) => [r.id, memberDisplayName(r.firstName, r.lastName, r.email)]));
@@ -1339,6 +1482,46 @@ export async function resolveVerifierNames(
   };
 }
 
+/**
+ * The TRUE season breakdown (memberTotal) for a set of members, in three
+ * queries whatever the set's size — the Member Directory's page and its CSV
+ * export. Same inputs as the standings computation, trash filters included,
+ * so a directory total can never disagree with the member's own breakdown.
+ */
+async function trueTotalsFor(orgId: string, members: Member[], season: string): Promise<Map<string, PointBreakdown>> {
+  const totals = new Map<string, PointBreakdown>();
+  if (members.length === 0) return totals;
+  const ids = members.map((m) => m.id);
+  const [registrations, awards, groups] = await Promise.all([
+    prisma.registration.findMany({
+      where: { userId: { in: ids }, ...liveRegistrationWhere(orgId) },
+      include: REGISTRATION_ATTENDANCE_INCLUDE,
+    }),
+    prisma.pointAward.findMany({
+      where: { userId: { in: ids }, ...liveAwardWhere(orgId) },
+      include: { user: { select: { email: true } } },
+    }),
+    getGroupBonusInputs(orgId),
+  ]);
+  const attendance = registrations.map(registrationToAttendance);
+  const allAwards = awards.map(pointAwardToDomain);
+  const now = new Date();
+  for (const m of members) {
+    totals.set(
+      m.email,
+      memberTotal(
+        m,
+        attendance.filter((a) => a.email === m.email),
+        allAwards.filter((a) => a.email === m.email),
+        groups,
+        now,
+        season,
+      ),
+    );
+  }
+  return totals;
+}
+
 export async function getMembersWithStats(orgId: string): Promise<MemberWithStats[]> {
   const [members, attendance, authRecords, log, currentSeason] = await Promise.all([
     getMembers(orgId),
@@ -1347,11 +1530,11 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
     getAdminLog(orgId),
     getConfigValue(orgId, "SEASON", ""),
   ]);
-  const totalsByEmail = new Map<string, { points: number; events: number }>();
+  const trueTotals = await trueTotalsFor(orgId, members, currentSeason);
+  const totalsByEmail = new Map<string, { events: number }>();
   const lastAttendanceByEmail = new Map<string, Date>();
   for (const row of attendance) {
-    const entry = totalsByEmail.get(row.email) ?? { points: 0, events: 0 };
-    entry.points += row.pointsAwarded;
+    const entry = totalsByEmail.get(row.email) ?? { events: 0 };
     entry.events += 1;
     totalsByEmail.set(row.email, entry);
     if (row.timestamp) {
@@ -1388,7 +1571,7 @@ export async function getMembersWithStats(orgId: string): Promise<MemberWithStat
         lastAttended && lastLogged ? (lastAttended > lastLogged ? lastAttended : lastLogged) : lastAttended ?? lastLogged;
       return {
         ...m,
-        points: totals?.points ?? 0,
+        points: trueTotals.get(m.email)?.total ?? 0,
         events: totals?.events ?? 0,
         accountState,
         eligible: isEligible(m, currentSeason),
@@ -1444,7 +1627,7 @@ export interface VerificationQueueResult {
 }
 
 export async function getDuesPendingMembers(orgId: string): Promise<VerificationQueueResult> {
-  const where = { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null };
+  const where = { orgId, duesPaidReported: true, duesVerifiedAt: null, duesRevokedAt: null, ...LIVE };
   const [rows, total] = await Promise.all([
     prisma.user.findMany({ where, orderBy: { duesReportedAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
     prisma.user.count({ where }),
@@ -1453,7 +1636,7 @@ export async function getDuesPendingMembers(orgId: string): Promise<Verification
 }
 
 export async function getNationalPendingMembers(orgId: string): Promise<VerificationQueueResult> {
-  const where = { orgId, nationalMemberReported: true, nationalVerifiedAt: null, nationalRevokedAt: null };
+  const where = { orgId, nationalMemberReported: true, nationalVerifiedAt: null, nationalRevokedAt: null, ...LIVE };
   const [rows, total] = await Promise.all([
     prisma.user.findMany({ where, orderBy: { createdAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
     prisma.user.count({ where }),
@@ -1462,7 +1645,7 @@ export async function getNationalPendingMembers(orgId: string): Promise<Verifica
 }
 
 export async function getHousePendingMembers(orgId: string): Promise<VerificationQueueResult> {
-  const where = { orgId, house: { not: null }, houseVerifiedAt: null };
+  const where = { orgId, house: { not: null }, houseVerifiedAt: null, ...LIVE };
   const [rows, total] = await Promise.all([
     prisma.user.findMany({ where, orderBy: { createdAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
     prisma.user.count({ where }),
@@ -1472,7 +1655,7 @@ export async function getHousePendingMembers(orgId: string): Promise<Verificatio
 
 /** Accounts with no House on file at all — the state getMissingFields re-asks for, surfaced so an admin can find them instead of discovering one by accident. ADMIN accounts are excluded: they never get a House step (see joinWizardRules.ts stepsFor) and getMissingFields never asks them for one, so listing them here would be noise, not a gap. */
 export async function getHouseMissingMembers(orgId: string): Promise<VerificationQueueResult> {
-  const where = { orgId, house: null, role: { not: DbRole.ADMIN } };
+  const where = { orgId, house: null, role: { not: DbRole.ADMIN }, ...LIVE };
   const [rows, total] = await Promise.all([
     prisma.user.findMany({ where, orderBy: { createdAt: "asc" }, take: VERIFICATION_QUEUE_LIMIT }),
     prisma.user.count({ where }),
@@ -1499,8 +1682,8 @@ async function actorUserId(tx: Tx, orgId: string, actor: string): Promise<string
 export async function verifyDues(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         duesVerifiedAt: new Date(),
         duesVerifiedById: await actorUserId(tx, orgId, actor),
@@ -1517,8 +1700,8 @@ export async function verifyDues(orgId: string, email: string, actor: string): P
 export async function revokeDues(orgId: string, email: string, actor: string, note: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         duesPaidReported: false,
         duesVerifiedAt: null,
@@ -1537,8 +1720,8 @@ export async function revokeDues(orgId: string, email: string, actor: string, no
 export async function verifyNational(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         nationalVerifiedAt: new Date(),
         nationalVerifiedById: await actorUserId(tx, orgId, actor),
@@ -1554,8 +1737,8 @@ export async function verifyNational(orgId: string, email: string, actor: string
 export async function revokeNational(orgId: string, email: string, actor: string, note: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         nationalMemberReported: false,
         nationalVerifiedAt: null,
@@ -1574,8 +1757,8 @@ export async function revokeNational(orgId: string, email: string, actor: string
 export async function verifyHouse(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: { houseVerifiedAt: new Date(), houseVerifiedById: await actorUserId(tx, orgId, actor) },
     });
     await logAdminAction(tx, orgId, { actor, action: "verify_house", target: e });
@@ -1585,8 +1768,8 @@ export async function verifyHouse(orgId: string, email: string, actor: string): 
 export async function rejectHouse(orgId: string, email: string, actor: string, note?: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: { house: null, houseVerifiedAt: null, houseVerifiedById: null, houseProofFileId: null },
     });
     await logAdminAction(tx, orgId, { actor, action: "reject_house", target: e, detail: note });
@@ -1597,8 +1780,8 @@ export async function rejectHouse(orgId: string, email: string, actor: string, n
 export async function correctHouse(orgId: string, email: string, house: string, note: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: { house, houseVerifiedAt: new Date(), houseVerifiedById: await actorUserId(tx, orgId, actor) },
     });
     await logAdminAction(tx, orgId, { actor, action: "correct_house", target: e, detail: `${house} — ${note}` });
@@ -1620,8 +1803,8 @@ export async function setDuesReported(orgId: string, email: string, reported: bo
   const currentSeason = await getConfigValue(orgId, "SEASON", "");
   const season = reported ? currentSeason : null;
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         duesPaidReported: reported,
         duesReportedAt: new Date(),
@@ -1654,8 +1837,8 @@ export async function setNationalReported(
   const currentSeason = await getConfigValue(orgId, "SEASON", "");
   const season = reported ? currentSeason : null;
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         nationalMemberReported: reported,
         ...(season !== null ? { membershipSeason: season } : {}),
@@ -1700,7 +1883,7 @@ export async function setHouseAssignment(
   actor: string,
 ): Promise<void> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
   if (user.houseVerifiedAt !== null) {
     throw new AppError("FORBIDDEN", "Your House is verified — contact an E-Board member to request a change.");
@@ -1715,8 +1898,8 @@ export async function setHouseAssignment(
     });
   }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: selfVerifies
         ? // Verified at the moment of selection, with no proof row to point
           // at. From here it is locked on exactly the same terms as any
@@ -1745,14 +1928,14 @@ export async function setHouseAssignment(
  */
 export async function clearHouseAssignment(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
   if (user.houseVerifiedAt !== null) {
     throw new AppError("FORBIDDEN", "Your House is verified — contact an E-Board member to request a change.");
   }
   if (user.house === null && user.houseProofFileId === null) return;
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { house: null, houseProofFileId: null } });
+    await updateLiveUser(tx, { where: { orgId_email: { orgId, email: e }, ...LIVE }, data: { house: null, houseProofFileId: null } });
     await logAdminAction(tx, orgId, { actor, action: "clear_house", target: e });
   });
 }
@@ -1771,7 +1954,7 @@ export async function clearHouseAssignment(orgId: string, email: string, actor: 
  * row twice for two views of it.
  */
 export async function getSignupUser(orgId: string, email: string): Promise<Member | null> {
-  const row = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: normalizeEmail(email) } } });
+  const row = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: normalizeEmail(email) }, ...LIVE } });
   if (!row) return null;
   // Member already carries every field SignupUser needs, the latch included.
   return userToMember(row);
@@ -1812,7 +1995,7 @@ export async function completeSignup(
 
   const completedAt = new Date();
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { signupCompletedAt: completedAt } });
+    await updateLiveUser(tx, { where: { orgId_email: { orgId, email: e }, ...LIVE }, data: { signupCompletedAt: completedAt } });
     await logAdminAction(tx, orgId, { actor: e, action: "complete_signup", target: e });
   });
   return { completedAt, missingSteps: [] };
@@ -1822,8 +2005,8 @@ export async function setResume(orgId: string, email: string, resumeFileId: stri
   const e = normalizeEmail(email);
   const now = new Date();
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: { resumeFileId, resumeUpdatedAt: now, resumeConsentAt: now },
     });
     await logAdminAction(tx, orgId, { actor, action: "set_resume", target: e });
@@ -1834,8 +2017,8 @@ export async function setResume(orgId: string, email: string, resumeFileId: stri
 export async function removeResume(orgId: string, email: string, actor: string): Promise<void> {
   const e = normalizeEmail(email);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: { resumeFileId: null, resumeUpdatedAt: null, resumeConsentAt: null },
     });
     await logAdminAction(tx, orgId, { actor, action: "remove_resume", target: e });
@@ -1870,8 +2053,8 @@ export async function updateProfileFields(
   const stampProfileSeason = fields.classification !== undefined || fields.major !== undefined;
   const season = stampProfileSeason ? await getConfigValue(orgId, "SEASON", "") : null;
   return prisma.$transaction(async (tx) => {
-    const row = await tx.user.update({
-      where: { orgId_email: { orgId, email: e } },
+    const row = await updateLiveUser(tx, {
+      where: { orgId_email: { orgId, email: e }, ...LIVE },
       data: {
         ...(fields.firstName !== undefined ? { firstName: fields.firstName } : {}),
         ...(fields.lastName !== undefined ? { lastName: fields.lastName } : {}),
@@ -1894,7 +2077,7 @@ export async function updateProfileFields(
 /** Self-service password change — verifies the current password first (unlike setPassword, used by the forced-setup-code flow, which trusts the caller already). */
 export async function changePassword(orgId: string, email: string, currentPassword: string, newPassword: string): Promise<void> {
   const e = normalizeEmail(email);
-  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
   const ok = await verifyPassword(currentPassword, user.passwordHash);
   if (!ok) {
@@ -1980,7 +2163,13 @@ export async function getUploadedFileForServing(
   orgId: string,
   id: string,
 ): Promise<(UploadedFile & { storageKey: string; ownerEmail: string }) | null> {
-  const row = await prisma.uploadedFile.findFirst({ where: { id, orgId }, include: { user: { select: { email: true } } } });
+  // A trashed member's files are kept until permanent deletion, but served to
+  // nobody meanwhile — the owner can't sign in, and to anyone else they're
+  // hidden like the rest of the account.
+  const row = await prisma.uploadedFile.findFirst({
+    where: { id, orgId, user: LIVE },
+    include: { user: { select: { email: true } } },
+  });
   if (!row) return null;
   return { ...uploadedFileToDomain(row), storageKey: row.storageKey, ownerEmail: row.user.email };
 }
@@ -2093,17 +2282,20 @@ export async function updateEventCategory(
 // stores a computed bonus value.
 // ---------------------------------------------------------------------------
 
+/** A group's eventIds, as every EventGroup read returns them: live events only. */
+const GROUP_EVENT_IDS = { events: { where: LIVE, select: { id: true } } } as const;
+
 export async function getEventGroups(orgId: string): Promise<EventGroup[]> {
   const rows = await prisma.eventGroup.findMany({
     where: { orgId },
-    include: { events: { select: { id: true } } },
+    include: GROUP_EVENT_IDS,
     orderBy: { createdAt: "desc" },
   });
   return rows.map(eventGroupToDomain);
 }
 
 export async function getEventGroup(orgId: string, id: string): Promise<EventGroup | null> {
-  const row = await prisma.eventGroup.findFirst({ where: { id, orgId }, include: { events: { select: { id: true } } } });
+  const row = await prisma.eventGroup.findFirst({ where: { id, orgId }, include: GROUP_EVENT_IDS });
   return row ? eventGroupToDomain(row) : null;
 }
 
@@ -2137,7 +2329,7 @@ export async function createEventGroup(input: CreateEventGroupInput): Promise<Ev
         expectedEventCount: input.expectedEventCount ?? 5,
         bonusTiers: input.bonusTiers as unknown as Prisma.InputJsonValue,
       },
-      include: { events: { select: { id: true } } },
+      include: GROUP_EVENT_IDS,
     });
     await logAdminAction(tx, orgId, { actor: input.createdBy, action: "create_group", target: row.id, detail: input.name });
     return eventGroupToDomain(row);
@@ -2156,7 +2348,7 @@ export async function updateEventGroupTiers(
     const row = await tx.eventGroup.update({
       where: { id },
       data: { bonusTiers: bonusTiers as unknown as Prisma.InputJsonValue },
-      include: { events: { select: { id: true } } },
+      include: GROUP_EVENT_IDS,
     });
     await logAdminAction(tx, orgId, { actor, action: "update_group_tiers", target: id });
     return eventGroupToDomain(row);
@@ -2166,7 +2358,7 @@ export async function updateEventGroupTiers(
 /** Assigns (or, with groupId null, removes) an event to/from a group — the /admin/groups matrix UI's write path onto Event.groupId. */
 export async function setEventGroup(orgId: string, eventId: string, groupId: string | null, actor: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    const event = await tx.event.findFirst({ where: { id: eventId, orgId } });
+    const event = await tx.event.findFirst({ where: { id: eventId, orgId, ...LIVE } });
     if (!event) throw new AppError("NOT_FOUND", "Event not found");
     if (groupId) {
       const group = await tx.eventGroup.findFirst({ where: { id: groupId, orgId } });
@@ -2189,7 +2381,7 @@ export async function finalizeEventGroup(orgId: string, id: string, actor: strin
     const row = await tx.eventGroup.update({
       where: { id },
       data: { finalizedAt: new Date(), finalizedById: actorUser?.id ?? null },
-      include: { events: { select: { id: true } } },
+      include: GROUP_EVENT_IDS,
     });
     await logAdminAction(tx, orgId, { actor, action: "finalize_group", target: id });
     return eventGroupToDomain(row);
@@ -2220,7 +2412,7 @@ export async function getActiveNsbeWeekProgress(
   const e = normalizeEmail(email);
   const groups = await prisma.eventGroup.findMany({
     where: { orgId },
-    include: { events: { select: { id: true, status: true, closesAt: true } } },
+    include: GROUP_BONUS_EVENTS,
     orderBy: { createdAt: "desc" },
   });
 
@@ -2234,7 +2426,7 @@ export async function getActiveNsbeWeekProgress(
     if (isGroupComplete(groupInput, now)) continue;
 
     const attended = await prisma.registration.count({
-      where: { eventId: { in: g.events.map((ev) => ev.id) }, user: { email: e } },
+      where: { eventId: { in: g.events.map((ev) => ev.id) }, user: { orgId, email: e, ...LIVE } },
     });
     return { groupName: g.name, attended, expectedEventCount: g.expectedEventCount, bonusTiers: groupInput.bonusTiers };
   }
@@ -2257,7 +2449,7 @@ export async function getGroupAttendanceMatrix(
 ): Promise<GroupAttendanceRow[]> {
   const group = await prisma.eventGroup.findFirst({
     where: { id: groupId, orgId },
-    include: { events: { select: { id: true, status: true, closesAt: true } } },
+    include: GROUP_BONUS_EVENTS,
   });
   if (!group) throw new AppError("NOT_FOUND", "Group not found");
 
@@ -2271,7 +2463,10 @@ export async function getGroupAttendanceMatrix(
   const [members, registrations] = await Promise.all([
     getMembers(orgId),
     eventIds.length > 0
-      ? prisma.registration.findMany({ where: { eventId: { in: eventIds } }, include: { user: { select: { email: true } } } })
+      ? prisma.registration.findMany({
+          where: { eventId: { in: eventIds }, user: LIVE },
+          include: { user: { select: { email: true } } },
+        })
       : Promise.resolve([]),
   ]);
 
@@ -2303,10 +2498,11 @@ export async function getGroupAttendanceMatrix(
 // application logic — a duplicate throws a real P2002.
 // ---------------------------------------------------------------------------
 
+/** One member's live awards (see liveAwardWhere) — a game bonus from a trashed event is left out, same as in every total. */
 export async function getPointAwardsForUser(orgId: string, email: string): Promise<PointAward[]> {
   const e = normalizeEmail(email);
   const rows = await prisma.pointAward.findMany({
-    where: { orgId, user: { email: e } },
+    where: { ...liveAwardWhere(orgId), user: { email: e, ...LIVE } },
     include: { user: { select: { email: true } } },
     orderBy: { awardedAt: "desc" },
   });
@@ -2322,6 +2518,10 @@ export async function awardGameBonus(
   reason: string,
   actor: string,
 ): Promise<{ awarded: string[]; skipped: string[] }> {
+  // A game bonus is tied to its event; a trashed event takes its bonuses out
+  // of every total (see liveAwardWhere), so it can't be handed new ones.
+  const event = await prisma.event.findFirst({ where: { id: eventId, orgId, ...LIVE }, select: { id: true } });
+  if (!event) throw new AppError("NOT_FOUND", "Event not found");
   const actorUser = await prisma.user.findUnique({
     where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
     select: { id: true },
@@ -2331,7 +2531,7 @@ export async function awardGameBonus(
   const skipped: string[] = [];
   for (const rawEmail of emails) {
     const email = normalizeEmail(rawEmail);
-    const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email } } });
+    const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email }, ...LIVE } });
     if (!user) {
       skipped.push(email);
       continue;
@@ -2380,8 +2580,18 @@ export interface CreateManualAwardInput {
 export async function createManualAward(input: CreateManualAwardInput): Promise<PointAward> {
   const { orgId } = input;
   const email = normalizeEmail(input.email);
+  // Taking points away is an ADJUSTMENT — reasoned, season-scoped, and gated
+  // on its own permission (see createPointAdjustment). A negative manual
+  // award would be an adjustment that skipped all three; the database refuses
+  // one too (PointAward_points_sign_check).
+  if (!Number.isInteger(input.points) || input.points < 0) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      "A manual award must be a whole number, zero or more. To take points away, use Adjust points on the member's page.",
+    );
+  }
   const award = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email } } });
+    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email }, ...LIVE } });
     if (!user) throw new AppError("NOT_FOUND", "Member not found");
     const actorUser = await tx.user.findUnique({
       where: { orgId_email: { orgId, email: normalizeEmail(input.actor) } },
@@ -2413,7 +2623,7 @@ export async function createManualAward(input: CreateManualAwardInput): Promise<
 /** Revoking is the only path from here forward — an award is never deleted, so the audit trail (who granted it, who took it back, why) survives. Standings re-derive on the next read; nothing to backfill. */
 export async function revokePointAward(orgId: string, id: string, actor: string, note: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    const existing = await tx.pointAward.findFirst({ where: { id, orgId } });
+    const existing = await tx.pointAward.findFirst({ where: { id, ...liveAwardWhere(orgId) } });
     if (!existing) throw new AppError("NOT_FOUND", "Award not found");
     const actorUser = await tx.user.findUnique({
       where: { orgId_email: { orgId, email: normalizeEmail(actor) } },
@@ -2439,6 +2649,8 @@ export interface MonthlyChampionCandidate {
   firstName: string;
   lastName: string;
   count: number;
+  /** A trashed member still competes — see calculateMonthlyChampions — so the preview says so rather than naming a hidden account without comment. */
+  inTrash: boolean;
 }
 
 export interface MonthlyChampionPreview {
@@ -2455,9 +2667,10 @@ export async function previewMonthlyChampions(
   month: string,
   now: Date = new Date(),
 ): Promise<MonthlyChampionPreview> {
+  // Same inputs as calculateMonthlyChampions, trashed members included — see there.
   const [attendance, members, minEventsConfig, existingAwards] = await Promise.all([
-    getAttendance(orgId),
-    getMembers(orgId),
+    getAttendance(orgId, { includeTrashedMembers: true }),
+    getMembers(orgId, { includeDeleted: true }),
     getMonthlyChampionConfig(orgId),
     prisma.pointAward.findMany({
       where: { orgId, kind: DbAwardKind.MONTHLY_CHAMPION, periodMonth: month, revokedAt: null },
@@ -2466,6 +2679,9 @@ export async function previewMonthlyChampions(
   ]);
   const champions = monthlyChampions(attendance, month, minEventsConfig, now);
   const memberByEmail = new Map(members.map((m) => [m.email, m]));
+  const trashed = new Set(
+    (await prisma.user.findMany({ where: { orgId, deletedAt: { not: null } }, select: { email: true } })).map((u) => u.email),
+  );
   return {
     month,
     champions: champions.map((c) => ({
@@ -2473,6 +2689,7 @@ export async function previewMonthlyChampions(
       firstName: memberByEmail.get(c.email)?.firstName ?? "",
       lastName: memberByEmail.get(c.email)?.lastName ?? "",
       count: c.count,
+      inTrash: trashed.has(c.email),
     })),
     alreadyMaterialized: existingAwards.map((a) => a.user.email),
   };
@@ -2492,6 +2709,22 @@ export interface CalculateMonthlyChampionsResult {
  * max are revoked and new ones are awarded — the (orgId,userId,kind,
  * periodMonth) unique constraint is what actually stops a still-champion
  * member from ever being double-awarded.
+ *
+ * Trash semantics, both deliberate:
+ *   - a trashed EVENT's registrations are excluded (getAttendance always drops
+ *     them), so deleting an event CAN change who wins its month — which is why
+ *     previewTrashEvent warns when the month has already been calculated, and
+ *     why this is never re-run automatically.
+ *   - a trashed MEMBER's registrations still count. Trashing hides a person;
+ *     it must not hand their month to someone else. So the result is exactly
+ *     what it would be without the trash, and a trashed champion is awarded
+ *     like anyone else — the award is invisible while they're trashed and
+ *     counts again if they're restored. `existing` is unfiltered for the same
+ *     reason: a trashed member's award must be found here, or re-running
+ *     would try to create it a second time.
+ *
+ * Point adjustments are not an input at all (monthlyChampions counts
+ * registrations only), so no adjustment can change a month's champion.
  */
 export async function calculateMonthlyChampions(
   orgId: string,
@@ -2501,7 +2734,7 @@ export async function calculateMonthlyChampions(
   now: Date = new Date(),
 ): Promise<CalculateMonthlyChampionsResult> {
   const [attendance, minEventsConfig, existing] = await Promise.all([
-    getAttendance(orgId),
+    getAttendance(orgId, { includeTrashedMembers: true }),
     getMonthlyChampionConfig(orgId),
     prisma.pointAward.findMany({
       where: { orgId, kind: DbAwardKind.MONTHLY_CHAMPION, periodMonth: month, revokedAt: null },
@@ -2531,6 +2764,7 @@ export async function calculateMonthlyChampions(
       revoked.push(award.user.email);
     }
     for (const champion of toAward) {
+      // Unfiltered on purpose — a trashed champion is awarded too (see above).
       const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: champion.email } } });
       if (!user) continue;
       await tx.pointAward.create({
@@ -2546,14 +2780,15 @@ export async function calculateMonthlyChampions(
       });
       awarded.push(champion.email);
     }
-    if (toAward.length > 0 || toRevoke.length > 0) {
-      await logAdminAction(tx, orgId, {
-        actor,
-        action: "calculate_monthly_champions",
-        target: month,
-        detail: `${toAward.length} awarded, ${toRevoke.length} revoked`,
-      });
-    }
+    // Logged on EVERY run, including a no-op: this entry is how the trash bin
+    // knows a month has been calculated at all (see getCalculatedMonths) — a
+    // month whose calculation found no champion writes no award row to go by.
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "calculate_monthly_champions",
+      target: month,
+      detail: `${toAward.length} awarded, ${toRevoke.length} revoked`,
+    });
   });
 
   if (awarded.length > 0 || revoked.length > 0) invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
@@ -2623,6 +2858,13 @@ export interface RegisterForEventInput {
   receivedAt?: Date;
   /** For the per-event brute-force failure log only (see verifyEventCodeOrThrow) — never used to key a rate limit here (the member is already keyed by email/userId at the UX-gate route). */
   ip?: string;
+  /**
+   * The core fields the client had live at submit (lib/core-form.ts
+   * RenderedFieldKey). Only these are validated or written — see planCheckIn.
+   * Omitted by a client too old to send it; then an unchanged echo of the
+   * stored profile is what gets dropped.
+   */
+  rendered?: readonly unknown[] | null;
 }
 
 export interface RegisterForEventResult {
@@ -2641,8 +2883,8 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
   const now = input.receivedAt ?? new Date();
 
   const [eventRow, user, coreFormConfig, season, eboardPointValue, eboardTrackEnabledRaw] = await Promise.all([
-    prisma.event.findFirst({ where: { id: input.eventId, orgId }, include: EVENT_INCLUDE }),
-    prisma.user.findUnique({ where: { orgId_email: { orgId, email } } }),
+    prisma.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE }, include: EVENT_INCLUDE }),
+    prisma.user.findUnique({ where: { orgId_email: { orgId, email }, ...LIVE } }),
     getCoreFormConfig(orgId),
     getConfigValue(orgId, "SEASON", ""),
     getConfigValue(orgId, "EBOARD_POINT_VALUE", "1"),
@@ -2695,22 +2937,64 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
   }
 
   // 4. Core-form validation — writes back to the User row (Part 2/3 of the
-  // spec). getMissingFields (lib/core-form.ts) is the SOLE source of truth
-  // for what's required: EBOARD_ONLY events get only genuinely-missing name
-  // fields (Part 6) — officers re-confirming dues/House/resume/
-  // classification/major/studentId at every weekly meeting is how a form
-  // gets abandoned. A Config.SEASON bump re-arms classification/major (via
-  // profileSeason) and dues/national (via membershipSeason) with no script.
-  const missingFields = new Set(reduced ? [] : getMissingFields(userToMember(user), event, { SEASON: season }));
-  const duesAlreadyReported = !missingFields.has("duesPaid");
-  const nationalAlreadyReported = !missingFields.has("nationalMember");
-  const fullCore = reduced
-    ? null
-    : validateCoreAnswers(
-        { role, majors: coreFormConfig.majors, houses: coreFormConfig.houses, missing: missingFields },
-        input.core,
-      );
-  const reducedCore = reduced ? validateReducedCoreAnswers(input.core) : null;
+  // spec). ONE plan, computed here at submit for this user and this event
+  // (lib/core-form.ts planCheckIn), from the same getMissingFields the form
+  // rendered from: only what the member was shown and answered is validated
+  // or written, and only what they were shown can be required. EBOARD_ONLY
+  // events go through the same path — getMissingFields stops at the name
+  // fields for them — rather than a second schema. A Config.SEASON bump
+  // re-arms classification/major (via profileSeason) and dues/national (via
+  // membershipSeason) with no script.
+  const rendered = input.rendered ?? null;
+  const plan = planCheckIn({
+    user: userToMember(user),
+    event,
+    config: { SEASON: season },
+    answers: input.core,
+    rendered,
+  });
+  if (plan.requiredButNotRendered.length > 0) {
+    logRequiredButNotRendered({ orgId, userId: user.id, eventId: event.eventId, fields: plan.requiredButNotRendered, rendered });
+  }
+  // What this submission actually ASKED — missing and shown. A question the
+  // member wasn't shown is treated exactly like one already answered: nothing
+  // written, the stored value snapshotted.
+  const asked = plan.required;
+  const duesAlreadyReported = !asked.has("duesPaid");
+  const nationalAlreadyReported = !asked.has("nationalMember");
+
+  const fields = (await prisma.formField.findMany({ where: { eventId: event.eventId }, orderBy: { order: "asc" } })).map(
+    formFieldToDomain,
+  );
+  // Every 422 below is logged with what the client rendered — see lib/checkin-diagnostics.ts.
+  const userId = user.id;
+  function rejected(err: unknown): never {
+    if (err instanceof AppError && err.code === "VALIDATION_FAILED") {
+      logCheckInRejection({
+        orgId,
+        userId,
+        eventId: event.eventId,
+        fieldErrors: err.fieldErrors ?? {},
+        message: err.message,
+        rendered,
+        missing: plan.missing,
+        extraFieldKeys: fields.map((f) => f.fieldKey),
+      });
+    }
+    throw err;
+  }
+
+  let validated: CoreFormAnswers;
+  try {
+    validated = validateCoreAnswers(
+      { role, majors: coreFormConfig.majors, houses: coreFormConfig.houses, missing: asked },
+      plan.answers,
+    );
+  } catch (err) {
+    rejected(err);
+  }
+  const fullCore = reduced ? null : validated;
+  const reducedCore = reduced ? { firstName: validated.firstName, lastName: validated.lastName } : null;
 
   // A newly-submitted House/Resume file must belong to this user — never trust a client-supplied fileId blindly.
   if (fullCore) {
@@ -2721,16 +3005,18 @@ export async function registerForEvent(input: RegisterForEventInput): Promise<Re
     if (fileIdsToCheck.length > 0) {
       const owned = await prisma.uploadedFile.count({ where: { id: { in: fileIdsToCheck }, userId: user.id, orgId } });
       if (owned !== fileIdsToCheck.length) {
-        throw new AppError("VALIDATION_FAILED", "One of your uploaded files couldn't be found. Try uploading again.");
+        rejected(new AppError("VALIDATION_FAILED", "One of your uploaded files couldn't be found. Try uploading again."));
       }
     }
   }
 
   // 5. Extra-question validation — unchanged from before, still ≤5 FormField rows.
-  const fields = (await prisma.formField.findMany({ where: { eventId: event.eventId }, orderBy: { order: "asc" } })).map(
-    formFieldToDomain,
-  );
-  const extraAnswers = validateAnswers(fields, input.extra);
+  let extraAnswers: ReturnType<typeof validateAnswers>;
+  try {
+    extraAnswers = validateAnswers(fields, input.extra);
+  } catch (err) {
+    rejected(err);
+  }
 
   // 6. Points. Member track: always the full amount regardless of
   // eligibility (see lib/points.ts isEligible) — this is a historical
@@ -2953,7 +3239,7 @@ export async function registerGuest(input: RegisterGuestInput): Promise<Register
     throw new AppError("VALIDATION_FAILED", "Check the highlighted fields.", { fieldErrors });
   }
 
-  const eventRow = await prisma.event.findFirst({ where: { id: input.eventId, orgId }, include: EVENT_INCLUDE });
+  const eventRow = await prisma.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
   if (!eventRow) throw new AppError("NOT_FOUND", "Event not found");
   const event = eventToDomain(eventRow);
   // EBOARD_ONLY events aren't for guests — the page already excludes them from the feed; this is defense in depth for a direct POST.
@@ -2972,6 +3258,13 @@ export async function registerGuest(input: RegisterGuestInput): Promise<Register
   );
   const extraAnswers = validateAnswers(fields, input.extra);
   const answerRows = serializeAnswers(fields, extraAnswers);
+
+  // A trashed row still owns its email, and the upsert below would happily
+  // attach a registration to it — refuse instead, without saying why.
+  const existing = await prisma.user.findUnique({ where: { orgId_email: { orgId, email } }, select: { deletedAt: true } });
+  if (existing?.deletedAt) {
+    throw new AppError("FORBIDDEN", "This email can't be used to check in. See an E-Board member.");
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -3088,7 +3381,7 @@ export interface UpdateEventInput {
 export async function updateEvent(input: UpdateEventInput): Promise<Event> {
   const { orgId } = input;
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId } });
+    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE } });
     if (!existing) throw new AppError("NOT_FOUND", "Event not found");
 
     if (input.categoryId !== undefined) {
@@ -3124,7 +3417,7 @@ export async function updateEvent(input: UpdateEventInput): Promise<Event> {
 
 export async function cancelEvent(orgId: string, eventId: string, actor: string): Promise<Event> {
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.event.findFirst({ where: { id: eventId, orgId } });
+    const existing = await tx.event.findFirst({ where: { id: eventId, orgId, ...LIVE } });
     if (!existing) throw new AppError("NOT_FOUND", "Event not found");
     const row = await tx.event.update({ where: { id: eventId }, data: { status: DbEventStatus.CANCELED }, include: EVENT_INCLUDE });
     await logAdminAction(tx, orgId, { actor, action: "cancel_event", target: eventId });
@@ -3145,7 +3438,7 @@ const DEFAULT_OPEN_DURATION_MINUTES = 60;
 export async function openEventNow(input: OpenEventNowInput): Promise<Event> {
   const { orgId } = input;
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId } });
+    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE } });
     if (!existing) throw new AppError("NOT_FOUND", "Event not found");
 
     const now = input.now ?? new Date();
@@ -3184,7 +3477,7 @@ export interface ExtendEventInput {
 export async function extendEvent(input: ExtendEventInput): Promise<Event> {
   const { orgId } = input;
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId }, include: EVENT_INCLUDE });
+    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
     if (!existing) throw new AppError("NOT_FOUND", "Event not found");
 
     const event = eventToDomain(existing);
@@ -3221,7 +3514,7 @@ export interface CloseEventNowInput {
 export async function closeEventNow(input: CloseEventNowInput): Promise<Event> {
   const { orgId } = input;
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId } });
+    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE } });
     if (!existing) throw new AppError("NOT_FOUND", "Event not found");
     const now = input.now ?? new Date();
     const row = await tx.event.update({ where: { id: input.eventId }, data: { closesAt: now }, include: EVENT_INCLUDE });
@@ -3246,7 +3539,7 @@ export interface ReopenEventInput {
 export async function reopenEvent(input: ReopenEventInput): Promise<Event> {
   const { orgId } = input;
   return prisma.$transaction(async (tx) => {
-    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId }, include: EVENT_INCLUDE });
+    const existing = await tx.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
     if (!existing) throw new AppError("NOT_FOUND", "Event not found");
     const prior = eventToDomain(existing);
 
@@ -3304,8 +3597,8 @@ export async function addManualAttendance(input: AddManualAttendanceInput): Prom
   const now = input.now ?? new Date();
 
   const [eventRow, user] = await Promise.all([
-    prisma.event.findFirst({ where: { id: input.eventId, orgId }, include: EVENT_INCLUDE }),
-    prisma.user.findUnique({ where: { orgId_email: { orgId, email } } }),
+    prisma.event.findFirst({ where: { id: input.eventId, orgId, ...LIVE }, include: EVENT_INCLUDE }),
+    prisma.user.findUnique({ where: { orgId_email: { orgId, email }, ...LIVE } }),
   ]);
   if (!eventRow) throw new AppError("NOT_FOUND", "Event not found");
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
@@ -3360,7 +3653,7 @@ export async function addManualAttendance(input: AddManualAttendanceInput): Prom
 export async function deleteAttendance(orgId: string, id: string, actor: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const row = await tx.registration.findFirst({
-      where: { id, event: { orgId } },
+      where: { id, ...liveRegistrationWhere(orgId) },
       include: { user: { select: { email: true } } },
     });
     if (!row) throw new AppError("NOT_FOUND", "Attendance record not found");
@@ -3385,11 +3678,11 @@ export async function deleteAttendance(orgId: string, id: string, actor: string)
 export async function setMemberRole(orgId: string, email: string, role: Role, actor: string): Promise<Member> {
   const e = normalizeEmail(email);
   const member = await prisma.$transaction(async (tx) => {
-    const existing = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e } } });
+    const existing = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
     if (!existing) throw new AppError("NOT_FOUND", "Member not found");
 
     if (existing.role === DbRole.ADMIN && role !== "admin") {
-      const otherAdmins = await tx.user.count({ where: { orgId, role: DbRole.ADMIN, id: { not: existing.id } } });
+      const otherAdmins = await tx.user.count({ where: { orgId, role: DbRole.ADMIN, id: { not: existing.id }, ...LIVE } });
       if (otherAdmins === 0) {
         throw new AppError("LAST_ADMIN", "Can't remove the last Admin — promote another account first.");
       }
@@ -3412,7 +3705,7 @@ export async function setEboardPosition(orgId: string, email: string, position: 
   return prisma.$transaction(async (tx) => {
     try {
       const row = await tx.user.update({
-        where: { orgId_email: { orgId, email: e } },
+        where: { orgId_email: { orgId, email: e }, ...LIVE },
         data: { eboardPosition: position.trim() || null },
       });
       await logAdminAction(tx, orgId, { actor, action: "set_eboard_position", target: e, detail: position });
@@ -3430,7 +3723,7 @@ export async function setMemberStatus(orgId: string, email: string, status: User
   const e = normalizeEmail(email);
   return prisma.$transaction(async (tx) => {
     try {
-      const row = await tx.user.update({ where: { orgId_email: { orgId, email: e } }, data: { status: statusToDb(status) } });
+      const row = await tx.user.update({ where: { orgId_email: { orgId, email: e }, ...LIVE }, data: { status: statusToDb(status) } });
       await logAdminAction(tx, orgId, { actor, action: "change_status", target: e, detail: status });
       return userToMember(row);
     } catch (err) {
@@ -3497,7 +3790,15 @@ export async function createMemberAccount(
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      throw new AppError("ALREADY_REGISTERED", "A member with this email already exists");
+      // A trashed account still owns its email and is invisible on the roster
+      // — say where it is, or the admin is told about a member they can't find.
+      const existing = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e } }, select: { deletedAt: true } });
+      throw new AppError(
+        "ALREADY_REGISTERED",
+        existing?.deletedAt
+          ? "An account with this email is in the trash — restore it from /admin/trash instead."
+          : "A member with this email already exists",
+      );
     }
     throw err;
   }
@@ -3615,7 +3916,7 @@ export async function resetPassword(orgId: string, email: string, actor: string)
 
   return prisma.$transaction(async (tx) => {
     const locked = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT "id" FROM "User" WHERE "orgId" = ${orgId} AND "email" = ${e} FOR UPDATE`;
+      SELECT "id" FROM "User" WHERE "orgId" = ${orgId} AND "email" = ${e} AND "deletedAt" IS NULL FOR UPDATE`;
     const id = locked[0]?.id;
     if (!id) throw new AppError("NOT_FOUND", "Member not found");
 
@@ -3655,7 +3956,7 @@ export async function revealSetupCode(
 ): Promise<{ setupCode: string; issuedAt: Date | null } | null> {
   const e = normalizeEmail(email);
   const user = await prisma.user.findUnique({
-    where: { orgId_email: { orgId, email: e } },
+    where: { orgId_email: { orgId, email: e }, ...LIVE },
     select: { setupCode: true, setupCodeIssuedAt: true },
   });
   if (!user) throw new AppError("NOT_FOUND", "Member not found");
@@ -4008,7 +4309,15 @@ export async function redeemJoinCodeForSignup(input: RedeemJoinCodeForSignupInpu
         }
       : {};
 
+    // Deliberately unfiltered: a trashed row still owns this email (the
+    // (orgId, email) unique covers it), so it can be neither converted nor
+    // re-created. Refused with the same message as any existing account.
     const existingGuest = await tx.user.findUnique({ where: { orgId_email: { orgId, email } } });
+    if (existingGuest?.deletedAt) {
+      throw new AppError("VALIDATION_FAILED", "An account with this email already exists.", {
+        fieldErrors: { email: "An account with this email already exists." },
+      });
+    }
     let row: UserModel;
     let convertedFromGuest = false;
     if (existingGuest && existingGuest.passwordHash === null) {
@@ -4144,7 +4453,7 @@ export async function saveFormFields(input: SaveFormFieldsInput): Promise<FormFi
   }
 
   return prisma.$transaction(async (tx) => {
-    const event = await tx.event.findFirst({ where: { id: input.eventId, orgId: input.orgId } });
+    const event = await tx.event.findFirst({ where: { id: input.eventId, orgId: input.orgId, ...LIVE } });
     if (!event) throw new AppError("NOT_FOUND", "Event not found");
 
     const existing = (await tx.formField.findMany({ where: { eventId: input.eventId } })).map(formFieldToDomain);
@@ -4205,9 +4514,9 @@ export async function saveFormFields(input: SaveFormFieldsInput): Promise<FormFi
 /** Copies another event's questions onto this one — for a brand-new event with no fields of its own yet. */
 export async function copyFormFields(orgId: string, fromEventId: string, toEventId: string, actor: string): Promise<FormField[]> {
   return prisma.$transaction(async (tx) => {
-    const toEvent = await tx.event.findFirst({ where: { id: toEventId, orgId } });
+    const toEvent = await tx.event.findFirst({ where: { id: toEventId, orgId, ...LIVE } });
     if (!toEvent) throw new AppError("NOT_FOUND", "Event not found");
-    const fromEvent = await tx.event.findFirst({ where: { id: fromEventId, orgId } });
+    const fromEvent = await tx.event.findFirst({ where: { id: fromEventId, orgId, ...LIVE } });
     if (!fromEvent) throw new AppError("NOT_FOUND", "Source event not found");
 
     const sourceFields = (
@@ -4267,8 +4576,15 @@ export interface BulkImportPreview {
 /** Read-only dry run: what would be created vs skipped, without writing anything. */
 export async function previewBulkImport(orgId: string, rows: BulkImportRow[]): Promise<BulkImportPreview> {
   const emails = rows.map((r) => normalizeEmail(r.email)).filter(Boolean);
-  const existingUsers = await prisma.user.findMany({ where: { orgId, email: { in: emails } }, select: { email: true } });
+  // Deliberately unfiltered: a trashed account still owns its email, so the
+  // import can't create it — say where it is instead of "already on the
+  // roster", which the admin can't see it on.
+  const existingUsers = await prisma.user.findMany({
+    where: { orgId, email: { in: emails } },
+    select: { email: true, deletedAt: true },
+  });
   const existing = new Set(existingUsers.map((u) => u.email));
+  const trashed = new Set(existingUsers.filter((u) => u.deletedAt !== null).map((u) => u.email));
   const seen = new Set<string>();
   const toCreate: BulkImportRow[] = [];
   const toSkip: BulkImportSkip[] = [];
@@ -4278,6 +4594,10 @@ export async function previewBulkImport(orgId: string, rows: BulkImportRow[]): P
     const row = { ...raw, email };
     if (!email || !raw.firstName.trim() || !raw.lastName.trim()) {
       toSkip.push({ row, reason: "Missing email, first name, or last name" });
+      continue;
+    }
+    if (trashed.has(email)) {
+      toSkip.push({ row, reason: "In the trash — restore it from /admin/trash instead" });
       continue;
     }
     if (existing.has(email)) {
@@ -4372,6 +4692,11 @@ export interface EventAttendanceSummary {
   categoryShortName: string;
   audience: Audience;
   groupId: string | null;
+  /**
+   * The event's headcount. Includes a trashed member's registration on
+   * purpose: trashing hides the person, it doesn't un-happen their attendance,
+   * so the count an officer reported for the event stays true.
+   */
   attendeeCount: number;
   /** Sum of Registration.pointsAwarded — the historical snapshot, which is what an officer auditing an event expects to see. */
   totalPoints: number;
@@ -4385,7 +4710,7 @@ export interface EventAttendanceSummary {
  */
 export async function getEventAttendanceSummaries(orgId: string): Promise<EventAttendanceSummary[]> {
   const events = await prisma.event.findMany({
-    where: { orgId },
+    where: { orgId, ...LIVE },
     include: EVENT_INCLUDE,
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
   });
@@ -4446,9 +4771,11 @@ export interface AttendeePage {
   rows: AttendeeRow[];
   /** Opaque cursor for the next page, or null when this was the last one. */
   nextCursor: string | null;
-  /** Every attendee matching the search, not just this page — see the note on getMembersPage. */
+  /** Every attendee matching the search, not just this page — see the note on getMembersPage. Live members only. */
   total: number;
   totalPoints: number;
+  /** Registrations on this event belonging to trashed members: still in the event's headcount (see EventAttendanceSummary), never listed. */
+  trashedCount: number;
 }
 
 /**
@@ -4468,22 +4795,23 @@ export async function getEventAttendees(
 
   const where: Prisma.RegistrationWhereInput = {
     eventId,
-    event: { orgId },
-    ...(q
-      ? {
-          user: {
+    event: { orgId, ...LIVE },
+    user: {
+      ...LIVE,
+      ...(q
+        ? {
             OR: [
               { firstName: { contains: q, mode: "insensitive" as const } },
               { lastName: { contains: q, mode: "insensitive" as const } },
               { email: { contains: q, mode: "insensitive" as const } },
               { studentId: { contains: q, mode: "insensitive" as const } },
             ],
-          },
-        }
-      : {}),
+          }
+        : {}),
+    },
   };
 
-  const [aggregate, rows] = await Promise.all([
+  const [aggregate, rows, trashedCount] = await Promise.all([
     prisma.registration.aggregate({ where, _count: { _all: true }, _sum: { pointsAwarded: true } }),
     prisma.registration.findMany({
       where,
@@ -4492,12 +4820,14 @@ export async function getEventAttendees(
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     }),
+    prisma.registration.count({ where: { eventId, event: { orgId, ...LIVE }, user: { deletedAt: { not: null } } } }),
   ]);
 
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
 
   return {
+    trashedCount,
     rows: page.map((r) => ({
       registrationId: r.id,
       email: r.user.email,
@@ -4543,6 +4873,7 @@ export async function getAddableMembers(
   const rows = await prisma.user.findMany({
     where: {
       orgId,
+      ...LIVE,
       // GUEST accounts can never sign in and are not part of the roster an
       // officer adds attendance for (see lib/joincodes.ts registerGuest).
       role: { not: DbRole.GUEST },
@@ -4613,12 +4944,12 @@ export async function previewManualAttendance(
 ): Promise<ManualAddPreview> {
   const normalized = [...new Set(emails.map((e) => normalizeEmail(e)))].filter(Boolean);
 
-  const eventRow = await prisma.event.findFirst({ where: { id: eventId, orgId }, include: EVENT_INCLUDE });
+  const eventRow = await prisma.event.findFirst({ where: { id: eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
   if (!eventRow) throw new AppError("NOT_FOUND", "Event not found");
   const event = eventToDomain(eventRow);
 
   const users = await prisma.user.findMany({
-    where: { orgId, email: { in: normalized } },
+    where: { orgId, email: { in: normalized }, ...LIVE },
     select: { id: true, email: true, firstName: true, lastName: true, role: true },
   });
 
@@ -4626,7 +4957,7 @@ export async function previewManualAttendance(
   // moves anyone across a bonus tier.
   const group = event.groupId ? await getEventGroup(orgId, event.groupId) : null;
   const groupEvents = group
-    ? await prisma.event.findMany({ where: { orgId, groupId: event.groupId }, include: EVENT_INCLUDE })
+    ? await prisma.event.findMany({ where: { orgId, groupId: event.groupId, ...LIVE }, include: EVENT_INCLUDE })
     : [];
   const groupInput = group
     ? {
@@ -4643,7 +4974,7 @@ export async function previewManualAttendance(
   // query, not one per member.
   const groupRegistrations = groupInput
     ? await prisma.registration.findMany({
-        where: { userId: { in: users.map((u) => u.id) }, event: { orgId, groupId: event.groupId } },
+        where: { userId: { in: users.map((u) => u.id) }, event: { orgId, groupId: event.groupId, ...LIVE } },
         select: { userId: true, eventId: true },
       })
     : [];
@@ -4722,11 +5053,11 @@ export async function addManualAttendanceBulk(input: {
   if (emails.length === 0) throw new AppError("VALIDATION_FAILED", "Select at least one member.");
 
   const now = input.now ?? new Date();
-  const eventRow = await prisma.event.findFirst({ where: { id: eventId, orgId }, include: EVENT_INCLUDE });
+  const eventRow = await prisma.event.findFirst({ where: { id: eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
   if (!eventRow) throw new AppError("NOT_FOUND", "Event not found");
   const event = eventToDomain(eventRow);
 
-  const users = await prisma.user.findMany({ where: { orgId, email: { in: emails } } });
+  const users = await prisma.user.findMany({ where: { orgId, email: { in: emails }, ...LIVE } });
   const byEmail = new Map(users.map((u) => [u.email, u]));
 
   const result: BulkManualAddResult = { added: [], alreadyRegistered: [], notFound: [], totalPoints: 0 };
@@ -4794,7 +5125,7 @@ export async function previewRemoveRegistration(
   now: Date = new Date(),
 ): Promise<RemoveRegistrationImpact> {
   const row = await prisma.registration.findFirst({
-    where: { id: registrationId, event: { orgId } },
+    where: { id: registrationId, ...liveRegistrationWhere(orgId) },
     include: {
       user: { select: { id: true, email: true, firstName: true, lastName: true } },
       event: { include: EVENT_INCLUDE },
@@ -4808,7 +5139,7 @@ export async function previewRemoveRegistration(
     const group = await getEventGroup(orgId, event.groupId);
     if (group) {
       const groupEvents = await prisma.event.findMany({
-        where: { orgId, groupId: event.groupId },
+        where: { orgId, groupId: event.groupId, ...LIVE },
         include: EVENT_INCLUDE,
       });
       const groupInput = {
@@ -4820,7 +5151,7 @@ export async function previewRemoveRegistration(
         finalizedAt: group.finalizedAt,
       };
       const mine = await prisma.registration.findMany({
-        where: { userId: row.user.id, event: { orgId, groupId: event.groupId } },
+        where: { userId: row.user.id, event: { orgId, groupId: event.groupId, ...LIVE } },
         select: { eventId: true },
       });
       const from = groupBonusFor(mine, groupInput, now);
@@ -4854,7 +5185,7 @@ export async function removeRegistration(
 
   await prisma.$transaction(async (tx) => {
     const row = await tx.registration.findFirst({
-      where: { id: registrationId, event: { orgId } },
+      where: { id: registrationId, ...liveRegistrationWhere(orgId) },
       include: { user: { select: { email: true } } },
     });
     if (!row) throw new AppError("NOT_FOUND", "Attendance record not found");
@@ -4885,7 +5216,7 @@ export async function updateRegistrationPoints(
 
   await prisma.$transaction(async (tx) => {
     const row = await tx.registration.findFirst({
-      where: { id: registrationId, event: { orgId } },
+      where: { id: registrationId, ...liveRegistrationWhere(orgId) },
       include: { user: { select: { email: true } } },
     });
     if (!row) throw new AppError("NOT_FOUND", "Attendance record not found");
@@ -4996,7 +5327,7 @@ function memberWhere(orgId: string, filters: MemberFilters, currentSeason: strin
     });
   }
 
-  return { orgId, AND: and };
+  return { orgId, ...LIVE, AND: and };
 }
 
 export interface MemberAggregates {
@@ -5068,11 +5399,13 @@ export async function getMembersPage(
 
   if (members.length === 0) return { rows: [], nextCursor: null };
 
-  // Scoped to this page's members, never the whole org.
-  const [registrations, authRows, logRows] = await Promise.all([
+  // Scoped to this page's members, never the whole org. Registrations for a
+  // trashed event are excluded — that's the Events column dropping when an
+  // event is trashed, and coming back exactly when it's restored.
+  const [registrations, authRows, logRows, trueTotals] = await Promise.all([
     prisma.registration.findMany({
-      where: { event: { orgId }, user: { orgId, email: { in: emails } } },
-      select: { pointsAwarded: true, createdAt: true, user: { select: { email: true } } },
+      where: { event: { orgId, ...LIVE }, user: { orgId, email: { in: emails } } },
+      select: { createdAt: true, user: { select: { email: true } } },
     }),
     prisma.user.findMany({
       where: { orgId, email: { in: emails } },
@@ -5083,14 +5416,14 @@ export async function getMembersPage(
       include: { actor: { select: { email: true } } },
       orderBy: { createdAt: "desc" },
     }),
+    trueTotalsFor(orgId, members, currentSeason),
   ]);
 
-  const totalsByEmail = new Map<string, { points: number; events: number }>();
+  const totalsByEmail = new Map<string, { events: number }>();
   const lastAttendanceByEmail = new Map<string, Date>();
   for (const r of registrations) {
     const email = r.user.email;
-    const entry = totalsByEmail.get(email) ?? { points: 0, events: 0 };
-    entry.points += r.pointsAwarded;
+    const entry = totalsByEmail.get(email) ?? { events: 0 };
     entry.events += 1;
     totalsByEmail.set(email, entry);
     if (r.createdAt) {
@@ -5120,7 +5453,7 @@ export async function getMembersPage(
 
       return {
         ...m,
-        points: totals?.points ?? 0,
+        points: trueTotals.get(m.email)?.total ?? 0,
         events: totals?.events ?? 0,
         accountState,
         eligible: isEligible(m, currentSeason),
@@ -5135,4 +5468,1233 @@ export async function getMembersPage(
   );
 
   return { rows: withStats, nextCursor: hasMore ? pageRows[pageRows.length - 1].id : null };
+}
+
+// ---------------------------------------------------------------------------
+// Point adjustments.
+//
+// Never an edit to Registration.pointsAwarded: a Registration is the
+// attendance record, and rewriting it destroys the reason the points existed.
+// An adjustment is its own PointAward row (kind ADJUSTMENT) — signed, reasoned,
+// stamped with the season it was made in, and revocable exactly like any other
+// award. Totals stay derived: memberTotal sums it into `adjustments`.
+//
+// Gated on the points_write permission (lib/access.ts), held outright by ADMIN
+// only — deliberately not attendance_write. Every create and revoke writes an
+// AdminLog row in the same transaction and invalidates the standings cache.
+// ---------------------------------------------------------------------------
+
+/** "correction" is not a reason. */
+export const ADJUSTMENT_REASON_MIN_LENGTH = 10;
+/** A fat-finger ceiling, not a policy: nothing in this chapter's scoring moves a member by hundreds of points. */
+export const ADJUSTMENT_MAX_ABS = 500;
+
+function validateAdjustment(points: number, reason: string): string {
+  if (!Number.isInteger(points) || points === 0) {
+    throw new AppError("VALIDATION_FAILED", "Enter a whole number of points, positive or negative, other than zero.", {
+      fieldErrors: { points: "Enter a whole number other than zero." },
+    });
+  }
+  if (Math.abs(points) > ADJUSTMENT_MAX_ABS) {
+    throw new AppError("VALIDATION_FAILED", `An adjustment can't move a member by more than ${ADJUSTMENT_MAX_ABS} points.`, {
+      fieldErrors: { points: `At most ${ADJUSTMENT_MAX_ABS} either way.` },
+    });
+  }
+  // Ten characters AND more than one word. "correction" is exactly ten
+  // characters, so a length floor alone lets through the very reason this
+  // rule exists to refuse; a single word can't say what happened. The
+  // database enforces the length floor too (PointAward_adjustment_fields_check).
+  const trimmed = reason.trim();
+  if (trimmed.length < ADJUSTMENT_REASON_MIN_LENGTH || !/\S\s+\S/.test(trimmed)) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      `Give a reason of at least ${ADJUSTMENT_REASON_MIN_LENGTH} characters that says what happened — "correction" is not a reason.`,
+      { fieldErrors: { reason: `At least ${ADJUSTMENT_REASON_MIN_LENGTH} characters, more than one word.` } },
+    );
+  }
+  return trimmed;
+}
+
+/** The season an adjustment is stamped with. Refuses an unset Config.SEASON: an adjustment stamped "" would never count (see lib/points.ts awardCountsForSeason). */
+async function adjustmentSeason(orgId: string): Promise<string> {
+  const season = (await getConfigValue(orgId, "SEASON", "")).trim();
+  if (!season) {
+    throw new AppError("VALIDATION_FAILED", "Set the current season in Settings before adjusting points — an adjustment belongs to a season.");
+  }
+  return season;
+}
+
+export interface PointAdjustmentRow extends PointAward {
+  awardedByName: string;
+  revokedByName: string;
+  relatedEventName: string;
+  /** False for a revoked adjustment or one from another season — listed, but not in the total. */
+  counts: boolean;
+}
+
+export interface MemberPointsPanel {
+  /** The TRUE breakdown — possibly negative; this is an admin surface. */
+  breakdown: PointBreakdown;
+  season: string;
+  eligible: boolean;
+  role: Role;
+  /** Rank on the member board right now, or null when they aren't on it (ineligible, or not GENERAL). */
+  rank: number | null;
+  totalRanked: number;
+  /** Every adjustment ever made to this member, newest first — revoked and other-season ones included, flagged by `counts`. */
+  adjustments: PointAdjustmentRow[];
+}
+
+/** Everything the Points panel on /admin/members/[id] shows. Reads live standings (never the cache): an admin about to adjust someone needs the rank as it is right now. */
+export async function getMemberPointsPanel(orgId: string, email: string): Promise<MemberPointsPanel> {
+  const e = normalizeEmail(email);
+  const member = await getMember(orgId, e);
+  if (!member) throw new AppError("NOT_FOUND", "Member not found");
+  const [breakdown, season, standings, rows] = await Promise.all([
+    getMemberBreakdown(orgId, e),
+    getConfigValue(orgId, "SEASON", ""),
+    getStandings(orgId),
+    prisma.pointAward.findMany({
+      where: { orgId, userId: member.id, kind: DbAwardKind.ADJUSTMENT },
+      include: {
+        user: { select: { email: true } },
+        awardedBy: { select: { firstName: true, lastName: true, email: true } },
+        revokedBy: { select: { firstName: true, lastName: true, email: true } },
+        relatedEvent: { select: { name: true, deletedAt: true } },
+      },
+      orderBy: { awardedAt: "desc" },
+    }),
+  ]);
+  const summary = summaryFor(e, standings);
+  const name = (u: { firstName: string; lastName: string; email: string } | null) =>
+    u ? memberDisplayName(u.firstName, u.lastName, u.email) : "";
+  return {
+    breakdown,
+    season,
+    eligible: isEligible(member, season),
+    role: member.role,
+    rank: summary.rank,
+    totalRanked: summary.totalRanked,
+    adjustments: rows.map((r) => {
+      const award = pointAwardToDomain(r);
+      return {
+        ...award,
+        awardedByName: name(r.awardedBy),
+        revokedByName: name(r.revokedBy),
+        relatedEventName: r.relatedEvent ? `${r.relatedEvent.name}${r.relatedEvent.deletedAt ? " (in trash)" : ""}` : "",
+        counts: award.revokedAt === null && awardCountsForSeason(award, season),
+      };
+    }),
+  };
+}
+
+export interface AdjustmentImpactMember {
+  email: string;
+  name: string;
+  role: Role;
+  eligible: boolean;
+  currentTotal: number;
+  newTotal: number;
+  /** Null when this member isn't on the member board (ineligible or not GENERAL) — before and after alike, since an adjustment changes neither. */
+  currentRank: number | null;
+  projectedRank: number | null;
+}
+
+export interface AdjustmentImpact {
+  points: number;
+  members: AdjustmentImpactMember[];
+  /** Every targeted member counted once — the bulk confirmation's "12 members". */
+  count: number;
+  /** points × count: how many points this moves in total. */
+  totalPointsAffected: number;
+  totalRanked: number;
+  /** Targets whose adjustment will not show on any board today — E-Board/Admin (whose internal board ignores adjustments entirely) and ineligible members. */
+  offBoard: Array<{ email: string; name: string; why: "eboard" | "admin" | "ineligible" | "guest" }>;
+  /** Emails that didn't resolve to a live member. */
+  notFound: string[];
+}
+
+/**
+ * What an adjustment would do, computed before anything is written: each
+ * target's current and new TRUE total, and their current and projected rank.
+ * Projection re-ranks the live board with every target's delta applied at once
+ * (lib/points.ts projectStandings), so a bulk adjustment's ranks account for
+ * the targets moving past each other, not just past everyone else.
+ */
+export async function previewPointAdjustment(orgId: string, emails: string[], points: number): Promise<AdjustmentImpact> {
+  const wanted = [...new Set(emails.map((e) => normalizeEmail(e)))].filter(Boolean);
+  const [users, standings, season] = await Promise.all([
+    prisma.user.findMany({ where: { orgId, email: { in: wanted }, ...LIVE } }),
+    getStandings(orgId),
+    getConfigValue(orgId, "SEASON", ""),
+  ]);
+  const members = users.map(userToMember);
+  const found = new Set(members.map((m) => m.email));
+  const totals = await trueTotalsFor(orgId, members, season);
+
+  const deltas = new Map(members.map((m) => [m.email.toLowerCase(), points]));
+  const projected = projectStandings(standings, deltas);
+  const rankOf = (board: Standing[], email: string) => board.find((s) => s.email.toLowerCase() === email.toLowerCase())?.rank ?? null;
+
+  const impactMembers: AdjustmentImpactMember[] = members
+    .map((m) => {
+      const currentTotal = totals.get(m.email)?.total ?? 0;
+      return {
+        email: m.email,
+        name: memberDisplayName(m.firstName, m.lastName, m.email),
+        role: m.role,
+        eligible: isEligible(m, season),
+        currentTotal,
+        newTotal: currentTotal + points,
+        currentRank: rankOf(standings, m.email),
+        projectedRank: rankOf(projected, m.email),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const offBoard: AdjustmentImpact["offBoard"] = [];
+  for (const m of impactMembers) {
+    if (m.role === "eboard" || m.role === "admin" || m.role === "guest") offBoard.push({ email: m.email, name: m.name, why: m.role });
+    else if (!m.eligible) offBoard.push({ email: m.email, name: m.name, why: "ineligible" });
+  }
+
+  return {
+    points,
+    members: impactMembers,
+    count: impactMembers.length,
+    totalPointsAffected: points * impactMembers.length,
+    totalRanked: standings.length,
+    offBoard,
+    notFound: wanted.filter((e) => !found.has(e)),
+  };
+}
+
+export interface CreatePointAdjustmentInput {
+  orgId: string;
+  email: string;
+  points: number;
+  reason: string;
+  /** Optional link to the event this corrects. Informational — it never makes the adjustment part of that event's counts. */
+  relatedEventId?: string | null;
+  actor: string;
+}
+
+export async function createPointAdjustment(input: CreatePointAdjustmentInput): Promise<PointAward> {
+  const [award] = await createPointAdjustments({ ...input, emails: [input.email] });
+  return award;
+}
+
+/**
+ * One adjustment per member, all in ONE transaction — a bulk adjustment with a
+ * shared reason either lands for every selected member or for none, so there
+ * is never a half-applied batch to reconcile. Each row still gets its own
+ * AdminLog entry: the audit trail names every person moved.
+ *
+ * Two adjustments on the same member are independent rows and both apply;
+ * there is no "replace". Undoing one is revokePointAdjustment.
+ */
+export async function createPointAdjustments(
+  input: Omit<CreatePointAdjustmentInput, "email"> & { emails: string[] },
+): Promise<PointAward[]> {
+  const { orgId } = input;
+  const reason = validateAdjustment(input.points, input.reason);
+  const emails = [...new Set(input.emails.map((e) => normalizeEmail(e)))].filter(Boolean);
+  if (emails.length === 0) throw new AppError("VALIDATION_FAILED", "Select at least one member.");
+  const season = await adjustmentSeason(orgId);
+
+  const awards = await prisma.$transaction(async (tx) => {
+    const users = await tx.user.findMany({ where: { orgId, email: { in: emails }, ...LIVE } });
+    const missing = emails.filter((e) => !users.some((u) => u.email === e));
+    if (missing.length > 0) throw new AppError("NOT_FOUND", `Member not found: ${missing.join(", ")}`);
+
+    let relatedEventName = "";
+    if (input.relatedEventId) {
+      const event = await tx.event.findFirst({ where: { id: input.relatedEventId, orgId, ...LIVE }, select: { name: true } });
+      if (!event) throw new AppError("NOT_FOUND", "The linked event wasn't found — it may be in the trash.");
+      relatedEventName = event.name;
+    }
+    const actorId = await actorUserId(tx, orgId, input.actor);
+
+    const created: PointAward[] = [];
+    for (const user of users) {
+      const row = await tx.pointAward.create({
+        data: {
+          orgId,
+          userId: user.id,
+          kind: DbAwardKind.ADJUSTMENT,
+          points: input.points,
+          reason,
+          season,
+          relatedEventId: input.relatedEventId || null,
+          awardedById: actorId,
+        },
+        include: { user: { select: { email: true } } },
+      });
+      await logAdminAction(tx, orgId, {
+        actor: input.actor,
+        action: "adjust_points",
+        target: user.email,
+        detail: `${formatSigned(input.points)} (${season})${relatedEventName ? ` re: ${relatedEventName}` : ""} — ${reason}`,
+      });
+      created.push(pointAwardToDomain(row));
+    }
+    return created;
+  });
+
+  invalidateStandings(orgId, season);
+  return awards;
+}
+
+/** Revoking is the only undo — the row stays, with who revoked it and why, and drops out of the sum on the next read. */
+export async function revokePointAdjustment(orgId: string, id: string, actor: string, note: string): Promise<void> {
+  const trimmed = note.trim();
+  if (!trimmed) throw new AppError("VALIDATION_FAILED", "A note is required to revoke an adjustment.");
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.pointAward.findFirst({
+      where: { id, orgId, kind: DbAwardKind.ADJUSTMENT, user: LIVE },
+      include: { user: { select: { email: true } } },
+    });
+    if (!existing) throw new AppError("NOT_FOUND", "Adjustment not found");
+    if (existing.revokedAt) throw new AppError("VALIDATION_FAILED", "This adjustment was already revoked.");
+    await tx.pointAward.update({
+      where: { id },
+      data: { revokedAt: new Date(), revokedById: await actorUserId(tx, orgId, actor), revokeNote: trimmed },
+    });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "revoke_adjustment",
+      target: existing.user.email,
+      detail: `${formatSigned(existing.points)} (${existing.season ?? "no season"}) revoked — ${trimmed}`,
+    });
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+}
+
+// ---------------------------------------------------------------------------
+// Trash bin.
+//
+// Trashing sets deletedAt/deletedById/deleteReason/permanentDeleteAt and
+// nothing else: every row the item owns is kept, and every read in this module
+// stops seeing it (see LIVE / liveRegistrationWhere at the top of the file).
+// Restoring clears the four columns — no backfill, no recomputation, because
+// every total here is derived on read.
+//
+// Permanent deletion (purge*) is the only path that destroys anything, and it
+// refuses to run without a backup: it writes a JSON snapshot of every row it is
+// about to remove first, and stops with BACKUP_UNAVAILABLE when there is
+// nowhere to write it (lib/storage.ts backupStorageStatus).
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_TRASH_RETENTION_DAYS = 30;
+export const TRASH_RETENTION_MAX_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export async function getTrashRetentionDays(orgId: string): Promise<number> {
+  const parsed = Number(await getConfigValue(orgId, "TRASH_RETENTION_DAYS", String(DEFAULT_TRASH_RETENTION_DAYS)));
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= TRASH_RETENTION_MAX_DAYS ? parsed : DEFAULT_TRASH_RETENTION_DAYS;
+}
+
+/**
+ * Changes Config.TRASH_RETENTION_DAYS and recomputes permanentDeleteAt for
+ * everything already in the bin (deletedAt + the new value), in the same
+ * transaction as the setting — the bin never shows dates from the old rule.
+ * Shortening it can put items past due; the next sweep takes them.
+ */
+export async function setTrashRetentionDays(
+  orgId: string,
+  days: number,
+  actor: string,
+): Promise<{ members: number; events: number }> {
+  if (!Number.isInteger(days) || days < 1 || days > TRASH_RETENTION_MAX_DAYS) {
+    throw new AppError("VALIDATION_FAILED", `Retention must be a whole number of days from 1 to ${TRASH_RETENTION_MAX_DAYS}.`, {
+      fieldErrors: { trashRetentionDays: `1 to ${TRASH_RETENTION_MAX_DAYS} days.` },
+    });
+  }
+  return prisma.$transaction(async (tx) => {
+    await tx.config.upsert({
+      where: { orgId_key: { orgId, key: "TRASH_RETENTION_DAYS" } },
+      update: { value: String(days) },
+      create: { orgId, key: "TRASH_RETENTION_DAYS", value: String(days) },
+    });
+    const members = await tx.$executeRaw`
+      UPDATE "User" SET "permanentDeleteAt" = "deletedAt" + make_interval(days => ${days}::int)
+      WHERE "orgId" = ${orgId} AND "deletedAt" IS NOT NULL`;
+    const events = await tx.$executeRaw`
+      UPDATE "Event" SET "permanentDeleteAt" = "deletedAt" + make_interval(days => ${days}::int)
+      WHERE "orgId" = ${orgId} AND "deletedAt" IS NOT NULL`;
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "update_config",
+      target: "TRASH_RETENTION_DAYS",
+      detail: `${days} — recomputed ${members} member(s), ${events} event(s) already in the trash`,
+    });
+    return { members, events };
+  });
+}
+
+/**
+ * The TRUE breakdown for one member by id, whether or not they're trashed —
+ * the purge log's "points at time of deletion" and the trash row's points.
+ * Same inputs as the standings computation otherwise: live events only, their
+ * own awards, the current season.
+ */
+async function breakdownForUserId(orgId: string, userId: string): Promise<{ breakdown: PointBreakdown; registrations: number }> {
+  const [user, registrations, awards, groups, season] = await Promise.all([
+    prisma.user.findFirst({ where: { id: userId, orgId } }),
+    prisma.registration.findMany({ where: { userId, event: { orgId, ...LIVE } }, include: REGISTRATION_ATTENDANCE_INCLUDE }),
+    prisma.pointAward.findMany({
+      where: { orgId, userId, OR: [{ eventId: null }, { event: LIVE }] },
+      include: { user: { select: { email: true } } },
+    }),
+    getGroupBonusInputs(orgId),
+    getConfigValue(orgId, "SEASON", ""),
+  ]);
+  const breakdown = memberTotal(
+    { role: user ? roleFromDb(user.role) : "general" },
+    registrations.map(registrationToAttendance),
+    awards.map(pointAwardToDomain),
+    groups,
+    new Date(),
+    season,
+  );
+  return { breakdown, registrations: registrations.length };
+}
+
+export interface TrashMemberPreview {
+  email: string;
+  name: string;
+  role: Role;
+  registrations: number;
+  /** TRUE total — what stops counting while they're trashed. */
+  points: number;
+  activeAdjustments: number;
+  files: number;
+  activeGrants: number;
+  retentionDays: number;
+  /** Set when trashing is refused outright — self, or the last admin. */
+  blockedReason: string | null;
+}
+
+/** Why a member can't be trashed at all, or null. Self-trash would sign the admin out mid-action; the last admin would lock everyone out of /admin — same guard as setMemberRole. */
+async function trashMemberBlock(
+  tx: Tx | typeof prisma,
+  orgId: string,
+  user: { id: string; email: string; role: DbRole },
+  actor: string,
+): Promise<{ code: "FORBIDDEN" | "LAST_ADMIN"; message: string } | null> {
+  if (user.email === normalizeEmail(actor)) return { code: "FORBIDDEN", message: "You can't move your own account to the trash." };
+  if (user.role === DbRole.ADMIN) {
+    const otherAdmins = await tx.user.count({ where: { orgId, role: DbRole.ADMIN, id: { not: user.id }, ...LIVE } });
+    if (otherAdmins === 0) return { code: "LAST_ADMIN", message: "Can't trash the last Admin — promote another account first." };
+  }
+  return null;
+}
+
+export async function previewTrashMember(orgId: string, email: string, actor: string): Promise<TrashMemberPreview> {
+  const e = normalizeEmail(email);
+  const user = await prisma.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
+  if (!user) throw new AppError("NOT_FOUND", "Member not found");
+  const [{ breakdown, registrations }, adjustments, files, grants, retentionDays, block] = await Promise.all([
+    breakdownForUserId(orgId, user.id),
+    prisma.pointAward.count({ where: { orgId, userId: user.id, kind: DbAwardKind.ADJUSTMENT, revokedAt: null } }),
+    prisma.uploadedFile.count({ where: { orgId, userId: user.id } }),
+    prisma.permissionGrant.count({ where: { orgId, userId: user.id, revokedAt: null } }),
+    getTrashRetentionDays(orgId),
+    trashMemberBlock(prisma, orgId, user, actor),
+  ]);
+  return {
+    email: user.email,
+    name: memberDisplayName(user.firstName, user.lastName, user.email),
+    role: roleFromDb(user.role),
+    registrations,
+    points: breakdown.total,
+    activeAdjustments: adjustments,
+    files,
+    activeGrants: grants,
+    retentionDays,
+    blockedReason: block?.message ?? null,
+  };
+}
+
+/**
+ * Moves a member to the trash. They disappear from every roster, board,
+ * standings computation and export; they can't sign in (getAuthRecord and
+ * getSessionUser both filter them), and a session they already had ends on its
+ * next request. Their active permission grants are revoked — and stay revoked
+ * on restore; a grant is re-issued deliberately, never resurrected.
+ *
+ * KEPT, and counting again on restore: every Registration (the events they
+ * attended keep their headcount, and they still compete for Monthly Champion —
+ * see calculateMonthlyChampions), every award including adjustments (not
+ * revoked, just not counted while trashed), and every uploaded file.
+ */
+export async function trashMember(orgId: string, email: string, reason: string, actor: string, now: Date = new Date()): Promise<void> {
+  const e = normalizeEmail(email);
+  const trimmed = reason.trim();
+  if (!trimmed) throw new AppError("VALIDATION_FAILED", "A reason is required to move a member to the trash.");
+  const retentionDays = await getTrashRetentionDays(orgId);
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { orgId_email: { orgId, email: e }, ...LIVE } });
+    if (!user) throw new AppError("NOT_FOUND", "Member not found");
+    const blocked = await trashMemberBlock(tx, orgId, user, actor);
+    if (blocked) throw new AppError(blocked.code, blocked.message);
+    const actorId = await actorUserId(tx, orgId, actor);
+
+    await tx.user.update({
+      where: { id: user.id },
+      data: {
+        deletedAt: now,
+        deletedById: actorId,
+        deleteReason: trimmed,
+        permanentDeleteAt: new Date(now.getTime() + retentionDays * DAY_MS),
+      },
+    });
+    const revokedGrants = await tx.permissionGrant.updateMany({
+      where: { orgId, userId: user.id, revokedAt: null },
+      data: { revokedAt: now, revokedById: actorId },
+    });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "trash_member",
+      target: e,
+      detail: `${trimmed} — permanently deletes in ${retentionDays} days${revokedGrants.count > 0 ? `; ${revokedGrants.count} permission grant(s) revoked` : ""}`,
+    });
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+}
+
+/** Clears the four trash columns: the member is back everywhere, with every registration, award and adjustment counting again exactly as before. Permission grants revoked on the way in are NOT restored. */
+export async function restoreMember(orgId: string, userId: string, actor: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findFirst({ where: { id: userId, orgId, deletedAt: { not: null } } });
+    if (!user) throw new AppError("NOT_FOUND", "That member isn't in the trash.");
+    await tx.user.update({
+      where: { id: user.id },
+      data: { deletedAt: null, deletedById: null, deleteReason: null, permanentDeleteAt: null },
+    });
+    await logAdminAction(tx, orgId, { actor, action: "restore_member", target: user.email, detail: user.deleteReason ?? undefined });
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+}
+
+/**
+ * Month -> the last time its Monthly Engagement Champion was calculated. From
+ * two sources: the calculate_monthly_champions AdminLog entry (written on every
+ * run — including one that found no champion and so wrote no award), and the
+ * awards themselves, for months calculated before that entry was always
+ * written.
+ */
+export async function getCalculatedMonths(orgId: string): Promise<Map<string, Date>> {
+  const [logs, awards] = await Promise.all([
+    prisma.adminLog.findMany({
+      where: { orgId, action: "calculate_monthly_champions", target: { not: null } },
+      select: { target: true, createdAt: true },
+    }),
+    prisma.pointAward.findMany({
+      where: { orgId, kind: DbAwardKind.MONTHLY_CHAMPION, periodMonth: { not: null } },
+      select: { periodMonth: true, awardedAt: true },
+    }),
+  ]);
+  const months = new Map<string, Date>();
+  const note = (month: string | null, at: Date) => {
+    if (!month) return;
+    const prior = months.get(month);
+    if (!prior || at > prior) months.set(month, at);
+  };
+  for (const l of logs) note(l.target, l.createdAt);
+  for (const a of awards) note(a.periodMonth, a.awardedAt);
+  return months;
+}
+
+/** "September 2026's Monthly Champion was calculated using this event…" — or null when the event can't have affected a calculated month. */
+function championWarningFor(
+  event: { closesAt: Date | null; category: { countsForMonthly: boolean } },
+  registrations: number,
+  calculated: Map<string, Date>,
+  verb: "Deleting" | "Restoring",
+): { month: string; message: string } | null {
+  if (!event.closesAt || !event.category.countsForMonthly || registrations === 0) return null;
+  const month = monthKeyOf(event.closesAt);
+  if (!calculated.has(month)) return null;
+  const label = formatMonthKey(month);
+  return {
+    month,
+    message:
+      verb === "Deleting"
+        ? `${label}'s Monthly Champion was calculated using this event. Deleting it may change who qualified. Recalculate ${label} after deleting.`
+        : `${label}'s Monthly Champion was calculated while this event was in the trash. Restoring it may change who qualified. Recalculate ${label} after restoring.`,
+  };
+}
+
+export interface GroupBonusTransition {
+  from: number;
+  to: number;
+  members: number;
+}
+
+export interface TrashEventGroupImpact {
+  groupName: string;
+  finalized: boolean;
+  eventsBefore: number;
+  eventsAfter: number;
+  expectedEventCount: number;
+  /** Tiers whose `min` can no longer be reached by anyone once this event is gone — tiers are absolute counts, never rescaled. */
+  unreachableTiers: BonusTier[];
+  transitions: GroupBonusTransition[];
+}
+
+export interface TrashEventPreview {
+  eventId: string;
+  eventName: string;
+  /** Open for check-in right now — trashing is refused until it's closed. */
+  windowOpen: boolean;
+  /** Live members who checked in — every one of them loses this event from every count. */
+  membersAffected: number;
+  registrations: number;
+  gameBonuses: number;
+  championWarning: { month: string; message: string } | null;
+  groupImpact: TrashEventGroupImpact | null;
+  retentionDays: number;
+}
+
+/**
+ * What trashing an event would do, before it happens. The attendance, the
+ * Monthly Champion month (warned about, never recalculated here), and the NSBE
+ * Week bonus, which IS derived and so changes on the next read — shown as
+ * "N members go from +5 to +3" by running the real groupBonusFor on the
+ * group's live events with and without this one.
+ */
+export async function previewTrashEvent(orgId: string, eventId: string, now: Date = new Date()): Promise<TrashEventPreview> {
+  const row = await prisma.event.findFirst({ where: { id: eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
+  if (!row) throw new AppError("NOT_FOUND", "Event not found");
+  const event = eventToDomain(row);
+
+  const [registrations, membersAffected, gameBonuses, calculated, retentionDays] = await Promise.all([
+    prisma.registration.count({ where: { eventId, event: { orgId } } }),
+    prisma.registration.count({ where: { eventId, user: LIVE } }),
+    prisma.pointAward.count({ where: { orgId, eventId, revokedAt: null } }),
+    getCalculatedMonths(orgId),
+    getTrashRetentionDays(orgId),
+  ]);
+
+  let groupImpact: TrashEventGroupImpact | null = null;
+  if (event.groupId) {
+    const group = await prisma.eventGroup.findFirst({ where: { id: event.groupId, orgId }, include: GROUP_BONUS_EVENTS });
+    if (group) {
+      const tiers = (group.bonusTiers as unknown as BonusTier[] | null) ?? [];
+      const before: GroupBonusInput = {
+        events: group.events.map((e) => ({ eventId: e.id, status: eventStatusFromDb(e.status), closesAt: e.closesAt })),
+        bonusTiers: tiers,
+        finalizedAt: group.finalizedAt,
+      };
+      const after: GroupBonusInput = { ...before, events: before.events.filter((e) => e.eventId !== eventId) };
+      const regs = await prisma.registration.findMany({
+        where: { eventId: { in: before.events.map((e) => e.eventId) }, user: { orgId, role: DbRole.GENERAL, ...LIVE } },
+        select: { userId: true, eventId: true },
+      });
+      const byUser = new Map<string, Array<{ eventId: string }>>();
+      for (const r of regs) byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), { eventId: r.eventId }]);
+      const moves = new Map<string, GroupBonusTransition>();
+      for (const mine of byUser.values()) {
+        const from = groupBonusFor(mine, before, now);
+        const to = groupBonusFor(mine, after, now);
+        if (from === to) continue;
+        const key = `${from}->${to}`;
+        const t = moves.get(key) ?? { from, to, members: 0 };
+        t.members += 1;
+        moves.set(key, t);
+      }
+      groupImpact = {
+        groupName: group.name,
+        finalized: group.finalizedAt !== null,
+        eventsBefore: before.events.length,
+        eventsAfter: after.events.length,
+        expectedEventCount: group.expectedEventCount,
+        unreachableTiers: tiers.filter((t) => t.min > after.events.length && t.min <= before.events.length),
+        transitions: [...moves.values()].sort((a, b) => b.members - a.members),
+      };
+    }
+  }
+
+  return {
+    eventId,
+    eventName: event.name,
+    windowOpen: isOpen(event, now),
+    membersAffected,
+    registrations,
+    gameBonuses,
+    championWarning: championWarningFor(event, registrations, calculated, "Deleting"),
+    groupImpact,
+    retentionDays,
+  };
+}
+
+/**
+ * Moves an event to the trash. Everything it contributed stops counting on the
+ * next read — every registration drops out of every attendance count, points
+ * total, NSBE Week tier and Monthly Champion count, and its game bonuses stop
+ * counting — while every row is kept, so restoring puts every count back
+ * exactly. Refused while its check-in window is open.
+ *
+ * A Monthly Champion already calculated for its month is NOT recalculated:
+ * silently changing who won a month is worse than telling someone.
+ * previewTrashEvent warns, and /admin/awards flags the month.
+ */
+export async function trashEvent(
+  orgId: string,
+  eventId: string,
+  reason: string,
+  actor: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const trimmed = reason.trim();
+  if (!trimmed) throw new AppError("VALIDATION_FAILED", "A reason is required to move an event to the trash.");
+  const retentionDays = await getTrashRetentionDays(orgId);
+  await prisma.$transaction(async (tx) => {
+    const row = await tx.event.findFirst({ where: { id: eventId, orgId, ...LIVE }, include: EVENT_INCLUDE });
+    if (!row) throw new AppError("NOT_FOUND", "Event not found");
+    if (isOpen(eventToDomain(row), now)) {
+      throw new AppError("VALIDATION_FAILED", "This event is open for check-in right now. Close it first, then delete it.");
+    }
+    const registrations = await tx.registration.count({ where: { eventId } });
+    await tx.event.update({
+      where: { id: eventId },
+      data: {
+        deletedAt: now,
+        deletedById: await actorUserId(tx, orgId, actor),
+        deleteReason: trimmed,
+        permanentDeleteAt: new Date(now.getTime() + retentionDays * DAY_MS),
+      },
+    });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "trash_event",
+      target: eventId,
+      detail: `${row.name} (${registrations} registration(s)) — ${trimmed} — permanently deletes in ${retentionDays} days`,
+    });
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+}
+
+/** Clears the four trash columns — every count the event contributed comes back exactly, because nothing was ever deleted. Returns a champion warning when its month was calculated while it was in the trash. */
+export async function restoreEvent(orgId: string, eventId: string, actor: string): Promise<{ championWarning: string | null }> {
+  const warning = await prisma.$transaction(async (tx) => {
+    const row = await tx.event.findFirst({ where: { id: eventId, orgId, deletedAt: { not: null } }, include: EVENT_INCLUDE });
+    if (!row) throw new AppError("NOT_FOUND", "That event isn't in the trash.");
+    const registrations = await tx.registration.count({ where: { eventId } });
+    await tx.event.update({
+      where: { id: eventId },
+      data: { deletedAt: null, deletedById: null, deleteReason: null, permanentDeleteAt: null },
+    });
+    await logAdminAction(tx, orgId, { actor, action: "restore_event", target: eventId, detail: row.name });
+
+    const calculated = await getCalculatedMonths(orgId);
+    const w = championWarningFor(row, registrations, calculated, "Restoring");
+    // Only when it was calculated WHILE this event was out — a calculation
+    // from before the delete already counted it, and restoring puts it back.
+    return w && row.deletedAt && (calculated.get(w.month) ?? new Date(0)) > row.deletedAt ? w.message : null;
+  });
+  invalidateStandings(orgId, await getConfigValue(orgId, "SEASON", ""));
+  return { championWarning: warning };
+}
+
+export interface MonthNeedingRecalculation {
+  month: string;
+  label: string;
+  events: Array<{ eventId: string; name: string; deletedAt: Date | null }>;
+}
+
+/**
+ * Calculated months that a trashed event may have changed — the
+ * "may need recalculation" flag on /admin/awards. A month qualifies when an
+ * event in it that could have affected the result (countsForMonthly, with at
+ * least one registration) went into the trash AFTER the month's last
+ * calculation. Recalculating clears the flag; restoring the event does too.
+ */
+export async function getMonthsNeedingRecalculation(orgId: string): Promise<MonthNeedingRecalculation[]> {
+  const [calculated, trashed] = await Promise.all([
+    getCalculatedMonths(orgId),
+    prisma.event.findMany({
+      where: { orgId, deletedAt: { not: null }, closesAt: { not: null }, category: { countsForMonthly: true }, registrations: { some: {} } },
+      select: { id: true, name: true, closesAt: true, deletedAt: true },
+    }),
+  ]);
+  const byMonth = new Map<string, MonthNeedingRecalculation>();
+  for (const e of trashed) {
+    const month = monthKeyOf(e.closesAt!);
+    const calculatedAt = calculated.get(month);
+    if (!calculatedAt || !e.deletedAt || calculatedAt > e.deletedAt) continue;
+    const entry = byMonth.get(month) ?? { month, label: formatMonthKey(month), events: [] };
+    entry.events.push({ eventId: e.id, name: e.name, deletedAt: e.deletedAt });
+    byMonth.set(month, entry);
+  }
+  return [...byMonth.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
+export interface TrashedMemberRow {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  deletedAt: Date;
+  deletedByName: string;
+  deleteReason: string;
+  permanentDeleteAt: Date;
+  registrations: number;
+  files: number;
+}
+
+export interface TrashedEventRow {
+  id: string;
+  name: string;
+  date: Date | null;
+  categoryName: string;
+  deletedAt: Date;
+  deletedByName: string;
+  deleteReason: string;
+  permanentDeleteAt: Date;
+  registrations: number;
+}
+
+export interface TrashListing {
+  members: TrashedMemberRow[];
+  events: TrashedEventRow[];
+  retentionDays: number;
+  backup: BackupStorageStatus;
+  lastSweepAt: Date | null;
+}
+
+/** /admin/trash — both tabs, each sorted soonest-to-delete first. */
+export async function getTrash(orgId: string): Promise<TrashListing> {
+  const [users, events, retentionDays, lastSweepRaw] = await Promise.all([
+    prisma.user.findMany({
+      where: { orgId, deletedAt: { not: null } },
+      include: { _count: { select: { registrations: true, uploadedFiles: true } } },
+      orderBy: { permanentDeleteAt: "asc" },
+    }),
+    prisma.event.findMany({
+      where: { orgId, deletedAt: { not: null } },
+      include: { ...EVENT_INCLUDE, _count: { select: { registrations: true } } },
+      orderBy: { permanentDeleteAt: "asc" },
+    }),
+    getTrashRetentionDays(orgId),
+    getConfigValue(orgId, TRASH_SWEEP_KEY, ""),
+  ]);
+  const deleterIds = [...new Set([...users, ...events].map((r) => r.deletedById).filter((id): id is string => Boolean(id)))];
+  const deleters =
+    deleterIds.length === 0
+      ? []
+      : await prisma.user.findMany({ where: { id: { in: deleterIds } }, select: { id: true, firstName: true, lastName: true, email: true } });
+  const nameById = new Map(deleters.map((d) => [d.id, memberDisplayName(d.firstName, d.lastName, d.email)]));
+  const lastSweep = lastSweepRaw ? new Date(lastSweepRaw) : null;
+
+  return {
+    members: users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: memberDisplayName(u.firstName, u.lastName, u.email),
+      role: roleFromDb(u.role),
+      deletedAt: u.deletedAt!,
+      deletedByName: nameById.get(u.deletedById ?? "") ?? "",
+      deleteReason: u.deleteReason ?? "",
+      permanentDeleteAt: u.permanentDeleteAt!,
+      registrations: u._count.registrations,
+      files: u._count.uploadedFiles,
+    })),
+    events: events.map((e) => ({
+      id: e.id,
+      name: e.name,
+      date: e.date,
+      categoryName: e.category.name,
+      deletedAt: e.deletedAt!,
+      deletedByName: nameById.get(e.deletedById ?? "") ?? "",
+      deleteReason: e.deleteReason ?? "",
+      permanentDeleteAt: e.permanentDeleteAt!,
+      registrations: e._count.registrations,
+    })),
+    retentionDays,
+    backup: backupStorageStatus(),
+    lastSweepAt: lastSweep && !Number.isNaN(lastSweep.getTime()) ? lastSweep : null,
+  };
+}
+
+// --- Permanent deletion ------------------------------------------------------
+
+export interface PurgeResult {
+  kind: "member" | "event";
+  id: string;
+  label: string;
+  snapshotKey: string;
+  registrations: number;
+  answers: number;
+  awards: number;
+  grants: number;
+  files: number;
+  /** storageKeys whose blob delete failed after the rows were gone — logged to AdminLog for a retry, never silently dropped. */
+  blobFailures: string[];
+}
+
+function assertBackupAvailable(): void {
+  const status = backupStorageStatus();
+  if (!status.configured) {
+    throw new AppError(
+      "BACKUP_UNAVAILABLE",
+      `Permanent deletion is blocked: backup storage isn't configured (${status.reason}). Nothing was deleted.`,
+    );
+  }
+}
+
+/** Writes the pre-deletion snapshot — every row about to be destroyed, in full — and returns its key. Throws (so nothing is deleted) if the write fails. */
+async function writePurgeSnapshot(orgId: string, kind: "member" | "event", id: string, rows: unknown, now: Date): Promise<string> {
+  const key = `trash-purges/${orgId}/${now.toISOString().replace(/[:.]/g, "-")}-${kind}-${id}.json`;
+  const body = Buffer.from(JSON.stringify({ kind, id, orgId, takenAt: now.toISOString(), rows }, null, 2), "utf8");
+  try {
+    await backupStorage.put(key, body);
+  } catch (err) {
+    throw new AppError("BACKUP_UNAVAILABLE", "Couldn't write the backup snapshot, so nothing was deleted. Try again, or check backup storage.", {
+      cause: err,
+    });
+  }
+  return key;
+}
+
+/**
+ * Permanently deletes a TRASHED member and everything they own: registrations
+ * (and their answers, by cascade), every PointAward including adjustments,
+ * permission grants, UploadedFile rows AND the stored blobs behind them.
+ *
+ * Order, deliberately: backup check → snapshot (every row, in full) → one
+ * transaction deleting the rows and writing the AdminLog entry → blob deletes.
+ * Blobs go last because they can't join the transaction: deleting them first
+ * would leave a restorable member pointing at files that no longer exist if
+ * the transaction then failed. A blob that fails to delete afterwards is
+ * reported and logged with its key, not swallowed.
+ *
+ * `confirm`, when given, must be the member's email — the typed confirmation
+ * the "Delete now" dialog requires, checked here rather than trusted from the
+ * client. The scheduled sweep passes none.
+ */
+export async function purgeTrashedMember(
+  orgId: string,
+  userId: string,
+  actor: string,
+  options: { confirm?: string; now?: Date } = {},
+): Promise<PurgeResult> {
+  assertBackupAvailable();
+  const now = options.now ?? new Date();
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId, deletedAt: { not: null } } });
+  if (!user) throw new AppError("NOT_FOUND", "That member isn't in the trash.");
+  if (options.confirm !== undefined && normalizeEmail(options.confirm) !== user.email) {
+    throw new AppError("VALIDATION_FAILED", "Type the member's email exactly to confirm.", { fieldErrors: { confirm: "Doesn't match." } });
+  }
+
+  const [registrations, awards, grants, files, { breakdown }] = await Promise.all([
+    prisma.registration.findMany({ where: { userId }, include: { answers: true } }),
+    prisma.pointAward.findMany({ where: { userId } }),
+    prisma.permissionGrant.findMany({ where: { userId } }),
+    prisma.uploadedFile.findMany({ where: { userId } }),
+    breakdownForUserId(orgId, userId),
+  ]);
+  const answers = registrations.reduce((n, r) => n + r.answers.length, 0);
+  const snapshotKey = await writePurgeSnapshot(orgId, "member", userId, { user, registrations, awards, grants, files }, now);
+
+  await prisma.$transaction(async (tx) => {
+    // Answers go with their registrations (onDelete: Cascade), grants with the
+    // user; the rest are RESTRICT and are deleted explicitly, children first.
+    await tx.registration.deleteMany({ where: { userId } });
+    await tx.pointAward.deleteMany({ where: { userId } });
+    await tx.uploadedFile.deleteMany({ where: { userId } });
+    await tx.user.delete({ where: { id: userId } });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "purge_member",
+      target: user.email,
+      detail:
+        `${memberDisplayName(user.firstName, user.lastName, user.email)} <${user.email}> (${user.role}) permanently deleted — ` +
+        `${registrations.length} registration(s), ${answers} answer(s), ${awards.length} award(s) ` +
+        `(${awards.filter((a) => a.kind === DbAwardKind.ADJUSTMENT).length} adjustment(s)), ${grants.length} grant(s), ` +
+        `${files.length} file(s); ${breakdown.total} points at deletion; trashed ${user.deletedAt?.toISOString()} — ` +
+        `${user.deleteReason ?? ""}; snapshot ${snapshotKey}`,
+    });
+  });
+
+  const blobFailures: string[] = [];
+  for (const f of files) {
+    try {
+      await storage.delete(f.storageKey);
+    } catch (err) {
+      console.error("[trash] blob delete failed", { storageKey: f.storageKey, err });
+      blobFailures.push(f.storageKey);
+    }
+  }
+  if (blobFailures.length > 0) {
+    await logSystemAdminEvent(orgId, {
+      actor,
+      action: "purge_blob_failed",
+      target: user.email,
+      detail: `Rows deleted, but these stored files were not: ${blobFailures.join(", ")}`,
+    });
+  }
+
+  return {
+    kind: "member",
+    id: userId,
+    label: user.email,
+    snapshotKey,
+    registrations: registrations.length,
+    answers,
+    awards: awards.length,
+    grants: grants.length,
+    files: files.length,
+    blobFailures,
+  };
+}
+
+/**
+ * Permanently deletes a TRASHED event: its registrations (and answers), its
+ * game bonuses, its form fields (cascade), and the event. An adjustment that
+ * merely links to it keeps its points and loses the link (relatedEventId SET
+ * NULL) — it was a correction about a member, not part of the event. Same
+ * backup → snapshot → transaction order as purgeTrashedMember; `confirm`, when
+ * given, must be the event's name.
+ */
+export async function purgeTrashedEvent(
+  orgId: string,
+  eventId: string,
+  actor: string,
+  options: { confirm?: string; now?: Date } = {},
+): Promise<PurgeResult> {
+  assertBackupAvailable();
+  const now = options.now ?? new Date();
+  const event = await prisma.event.findFirst({ where: { id: eventId, orgId, deletedAt: { not: null } } });
+  if (!event) throw new AppError("NOT_FOUND", "That event isn't in the trash.");
+  if (options.confirm !== undefined && options.confirm.trim() !== event.name.trim()) {
+    throw new AppError("VALIDATION_FAILED", "Type the event name exactly to confirm.", { fieldErrors: { confirm: "Doesn't match." } });
+  }
+
+  const [registrations, awards, fields, linkedAdjustments] = await Promise.all([
+    prisma.registration.findMany({ where: { eventId }, include: { answers: true, user: { select: { email: true } } } }),
+    prisma.pointAward.findMany({ where: { eventId } }),
+    prisma.formField.findMany({ where: { eventId } }),
+    prisma.pointAward.count({ where: { relatedEventId: eventId } }),
+  ]);
+  const answers = registrations.reduce((n, r) => n + r.answers.length, 0);
+  const registrationPoints = registrations.reduce((n, r) => n + r.pointsAwarded, 0);
+  const snapshotKey = await writePurgeSnapshot(orgId, "event", eventId, { event, fields, registrations, awards }, now);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.registration.deleteMany({ where: { eventId } });
+    await tx.pointAward.deleteMany({ where: { eventId } });
+    await tx.event.delete({ where: { id: eventId } });
+    await logAdminAction(tx, orgId, {
+      actor,
+      action: "purge_event",
+      target: eventId,
+      detail:
+        `"${event.name}" (${event.date.toISOString().slice(0, 10)}) permanently deleted — ` +
+        `${registrations.length} registration(s) worth ${registrationPoints} point(s) at check-in, ${answers} answer(s), ` +
+        `${awards.length} game bonus award(s), ${fields.length} form field(s)` +
+        `${linkedAdjustments > 0 ? `; ${linkedAdjustments} adjustment(s) kept, unlinked` : ""}; ` +
+        `trashed ${event.deletedAt?.toISOString()} — ${event.deleteReason ?? ""}; snapshot ${snapshotKey}`,
+    });
+  });
+
+  return {
+    kind: "event",
+    id: eventId,
+    label: event.name,
+    snapshotKey,
+    registrations: registrations.length,
+    answers,
+    awards: awards.length,
+    grants: 0,
+    files: 0,
+    blobFailures: [],
+  };
+}
+
+export interface EmptyTrashPreview {
+  members: number;
+  events: number;
+  registrations: number;
+  answers: number;
+  awards: number;
+  adjustments: number;
+  grants: number;
+  files: number;
+  fileBytes: number;
+  memberLabels: string[];
+  eventLabels: string[];
+}
+
+/** Exactly what "Empty trash" would destroy — counted from the same rows the purge functions delete. */
+export async function previewEmptyTrash(orgId: string): Promise<EmptyTrashPreview> {
+  const [users, events] = await Promise.all([
+    prisma.user.findMany({ where: { orgId, deletedAt: { not: null } }, select: { id: true, email: true } }),
+    prisma.event.findMany({ where: { orgId, deletedAt: { not: null } }, select: { id: true, name: true } }),
+  ]);
+  const userIds = users.map((u) => u.id);
+  const eventIds = events.map((e) => e.id);
+  // A registration can belong to a trashed member AND a trashed event — count it once.
+  const registrationWhere: Prisma.RegistrationWhereInput = { OR: [{ userId: { in: userIds } }, { eventId: { in: eventIds } }] };
+  const awardWhere: Prisma.PointAwardWhereInput = { orgId, OR: [{ userId: { in: userIds } }, { eventId: { in: eventIds } }] };
+  const [registrations, answers, awards, adjustments, grants, files] = await Promise.all([
+    prisma.registration.count({ where: registrationWhere }),
+    prisma.answer.count({ where: { registration: registrationWhere } }),
+    prisma.pointAward.count({ where: awardWhere }),
+    prisma.pointAward.count({ where: { ...awardWhere, kind: DbAwardKind.ADJUSTMENT } }),
+    prisma.permissionGrant.count({ where: { orgId, userId: { in: userIds } } }),
+    prisma.uploadedFile.aggregate({ where: { orgId, userId: { in: userIds } }, _count: { _all: true }, _sum: { sizeBytes: true } }),
+  ]);
+  return {
+    members: users.length,
+    events: events.length,
+    registrations,
+    answers,
+    awards,
+    adjustments,
+    grants,
+    files: files._count._all,
+    fileBytes: files._sum.sizeBytes ?? 0,
+    memberLabels: users.map((u) => u.email),
+    eventLabels: events.map((e) => e.name),
+  };
+}
+
+export interface EmptyTrashResult {
+  purged: PurgeResult[];
+  /** An item that failed stops nothing else; it stays in the trash and is reported here. */
+  failures: Array<{ kind: "member" | "event"; id: string; message: string }>;
+}
+
+async function purgeAll(
+  orgId: string,
+  actor: string,
+  items: { members: Array<{ id: string }>; events: Array<{ id: string }> },
+  now: Date,
+): Promise<EmptyTrashResult> {
+  const result: EmptyTrashResult = { purged: [], failures: [] };
+  // Events first: a registration shared with a trashed member then goes with
+  // the event, and the member purge that follows finds one fewer row.
+  for (const e of items.events) {
+    try {
+      result.purged.push(await purgeTrashedEvent(orgId, e.id, actor, { now }));
+    } catch (err) {
+      if (err instanceof AppError && err.code === "BACKUP_UNAVAILABLE") throw err;
+      result.failures.push({ kind: "event", id: e.id, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  for (const m of items.members) {
+    try {
+      result.purged.push(await purgeTrashedMember(orgId, m.id, actor, { now }));
+    } catch (err) {
+      if (err instanceof AppError && err.code === "BACKUP_UNAVAILABLE") throw err;
+      result.failures.push({ kind: "member", id: m.id, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/** Permanently deletes everything currently in the trash. `confirm` must be exactly "DELETE". Blocked outright without backup storage. */
+export async function emptyTrash(orgId: string, actor: string, confirm: string, now: Date = new Date()): Promise<EmptyTrashResult> {
+  if (confirm !== "DELETE") {
+    throw new AppError("VALIDATION_FAILED", 'Type DELETE to empty the trash.', { fieldErrors: { confirm: 'Type DELETE exactly.' } });
+  }
+  assertBackupAvailable();
+  const [members, events] = await Promise.all([
+    prisma.user.findMany({ where: { orgId, deletedAt: { not: null } }, select: { id: true } }),
+    prisma.event.findMany({ where: { orgId, deletedAt: { not: null } }, select: { id: true } }),
+  ]);
+  const result = await purgeAll(orgId, actor, { members, events }, now);
+  await logSystemAdminEvent(orgId, {
+    actor,
+    action: "empty_trash",
+    target: "trash",
+    detail: `${result.purged.length} item(s) permanently deleted, ${result.failures.length} failed`,
+  });
+  return result;
+}
+
+// --- Expiry: the lazy sweep --------------------------------------------------
+
+/** Config key holding the ISO timestamp of the last sweep that actually ran — the hourly rate limit. */
+export const TRASH_SWEEP_KEY = "TRASH_SWEEP_LAST_RUN";
+export const TRASH_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Claims this hour's sweep for the org, atomically: a conditional UPDATE that
+ * only matches when the stored timestamp is over an hour old, or a first-ever
+ * INSERT. Two concurrent page loads both try; Postgres lets exactly one win,
+ * so the sweep runs at most once an hour however many admins are clicking.
+ * ISO-8601 UTC strings of one fixed format sort as text in time order, which
+ * is what makes the `lt` comparison valid.
+ */
+async function claimTrashSweep(orgId: string, now: Date): Promise<boolean> {
+  const threshold = new Date(now.getTime() - TRASH_SWEEP_INTERVAL_MS).toISOString();
+  const updated = await prisma.config.updateMany({
+    where: { orgId, key: TRASH_SWEEP_KEY, value: { lte: threshold } },
+    data: { value: now.toISOString() },
+  });
+  if (updated.count === 1) return true;
+  try {
+    await prisma.config.create({ data: { orgId, key: TRASH_SWEEP_KEY, value: now.toISOString() } });
+    return true;
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") return false;
+    throw err;
+  }
+}
+
+export type TrashSweepResult =
+  | { ran: false; reason: "rate_limited" }
+  | { ran: false; reason: "backup_unconfigured"; detail: string }
+  | { ran: true; purged: PurgeResult[]; failures: EmptyTrashResult["failures"] };
+
+/**
+ * Permanently deletes every trashed item past its permanentDeleteAt. There is
+ * no cron in this project, so this runs lazily — on a load of /admin or
+ * /admin/trash, at most once an hour (claimTrashSweep) — plus from the "Run
+ * cleanup now" button (`force`, which skips the hourly limit but not the
+ * backup check) and GET /api/cron/trash-sweep.
+ *
+ * Without backup storage it does not run at all: items sit in the trash past
+ * their date rather than being destroyed with no snapshot behind them. That
+ * state is logged (at most hourly, since it's behind the claim) and shown on
+ * /admin/trash as "Retention paused".
+ */
+export async function runTrashSweep(
+  orgId: string,
+  options: { now?: Date; force?: boolean; actor?: string } = {},
+): Promise<TrashSweepResult> {
+  const now = options.now ?? new Date();
+  const actor = options.actor ?? "system";
+  if (options.force) {
+    await prisma.config.upsert({
+      where: { orgId_key: { orgId, key: TRASH_SWEEP_KEY } },
+      update: { value: now.toISOString() },
+      create: { orgId, key: TRASH_SWEEP_KEY, value: now.toISOString() },
+    });
+  } else if (!(await claimTrashSweep(orgId, now))) {
+    return { ran: false, reason: "rate_limited" };
+  }
+
+  const status = backupStorageStatus();
+  if (!status.configured) {
+    await logSystemAdminEvent(orgId, { actor, action: "trash_sweep_paused", target: "trash", detail: status.reason });
+    return { ran: false, reason: "backup_unconfigured", detail: status.reason };
+  }
+
+  const [members, events] = await Promise.all([
+    prisma.user.findMany({ where: { orgId, deletedAt: { not: null }, permanentDeleteAt: { lte: now } }, select: { id: true } }),
+    prisma.event.findMany({ where: { orgId, deletedAt: { not: null }, permanentDeleteAt: { lte: now } }, select: { id: true } }),
+  ]);
+  if (members.length === 0 && events.length === 0) return { ran: true, purged: [], failures: [] };
+  const result = await purgeAll(orgId, actor, { members, events }, now);
+  await logSystemAdminEvent(orgId, {
+    actor,
+    action: "trash_sweep",
+    target: "trash",
+    detail: `${result.purged.length} expired item(s) permanently deleted, ${result.failures.length} failed`,
+  });
+  return { ran: true, ...result };
 }

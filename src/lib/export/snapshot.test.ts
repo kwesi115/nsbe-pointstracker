@@ -6,10 +6,14 @@
  * write/list round-trip.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { backupStorage } from "@/lib/storage";
 import { listSeasonSnapshots, SNAPSHOT_PREFIX_FOR, writeSeasonSnapshot } from "./snapshot";
+
+// A full season workbook built from the database — comfortably under 5s alone, but not under the
+// full suite's parallel database load. Same allowance as src/auth.test.ts.
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("writeSeasonSnapshot / listSeasonSnapshots", () => {
   afterEach(async () => {

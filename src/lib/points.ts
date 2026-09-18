@@ -170,6 +170,12 @@ export function isGroupComplete(group: Pick<GroupBonusInput, "events" | "finaliz
  * highest-matching tier — "1-2 of 5 -> no bonus" is simply the absence of a
  * matching tier, not a special case; if a tier's max is null it has no
  * ceiling (e.g. "5 or more").
+ *
+ * The inputs are attendance and the group's own events — no point value, award
+ * or adjustment reaches it, so an adjustment can never move a member between
+ * tiers. `group.events` must already exclude trashed events (see lib/repo.ts
+ * getGroupBonusInputs): the tiers are then evaluated against the events that
+ * remain, as absolute counts, never rescaled to expectedEventCount.
  */
 export function groupBonusFor(
   memberRegistrations: Pick<AttendanceRecord, "eventId">[],
@@ -191,7 +197,8 @@ export function groupBonusFor(
 // edit and E-Board can see who won before it counts.
 // ---------------------------------------------------------------------------
 
-function monthKeyOf(date: Date): string {
+/** The calendar month ("2026-09") a registration is bucketed into for the Monthly Engagement Champion — exported so the trash bin's "calculated month" check buckets an event exactly the way monthlyChampions does. */
+export function monthKeyOf(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
@@ -217,6 +224,12 @@ export interface MonthlyChampionResult {
  * a closed calendar month — ties ALL receive the bonus, there is no
  * tiebreaker. Returns [] before the month is over (no provisional champion)
  * and [] if even the max count is below MONTHLY_CHAMPION_MIN_EVENTS.
+ *
+ * Counts registrations and nothing else — no point value, award, or
+ * adjustment is an input, so a point adjustment can never change who wins a
+ * month. A trashed EVENT's registrations are excluded by the caller (see
+ * lib/repo.ts getAttendance); a trashed MEMBER's are deliberately not — see
+ * calculateMonthlyChampions.
  */
 export function monthlyChampions(
   registrations: Pick<AttendanceRecord, "email" | "role" | "closesAt" | "category">[],
@@ -248,18 +261,35 @@ export function monthlyChampions(
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether an award counts toward `currentSeason`'s totals. Only an
+ * "adjustment" is season-scoped: it belongs to the Config.SEASON it was made
+ * in (PointAward.season), so bumping SEASON drops every adjustment at once —
+ * the same no-script rollover as membershipSeason. The Boolean guard mirrors
+ * isEligible's: an unset season must not match an adjustment stamped "".
+ * Every other kind keeps its existing, unscoped behavior.
+ */
+export function awardCountsForSeason(award: Pick<PointAward, "kind" | "season">, currentSeason: string): boolean {
+  if (award.kind !== "adjustment") return true;
+  return Boolean(currentSeason) && award.season === currentSeason;
+}
+
+/**
  * One member's full point breakdown for the season: live-derived event
  * points (see memberPointsFor) plus every bonus that applies to them right
- * now. `now` drives both the NSBE Week completion check and nothing else —
- * awards are pre-filtered to active (non-revoked) by the caller... actually
- * filtered here, see below.
+ * now, plus signed adjustments. `now` drives the NSBE Week completion check
+ * and nothing else. Revoked awards are filtered here, and so are adjustments
+ * from another season (awardCountsForSeason).
+ *
+ * `total` is the TRUE value and may be negative — see displayTotal for what a
+ * member is shown.
  */
 export function memberTotal(
   user: Pick<Member, "role">,
   registrations: Pick<AttendanceRecord, "eventId" | "eventPointsOverride" | "category">[],
-  awards: Pick<PointAward, "kind" | "points" | "revokedAt">[],
+  awards: Pick<PointAward, "kind" | "points" | "revokedAt" | "season">[],
   groups: GroupBonusInput[],
   now: Date,
+  currentSeason: string,
 ): PointBreakdown {
   const eventPoints = registrations.reduce(
     (sum, r) => sum + memberPointsFor(user, { points: r.eventPointsOverride }, r.category),
@@ -269,11 +299,12 @@ export function memberTotal(
   const memberEventIds = registrations.map((r) => ({ eventId: r.eventId }));
   const nsbeWeekBonus = groups.reduce((sum, g) => sum + groupBonusFor(memberEventIds, g, now), 0);
 
-  const active = awards.filter((a) => a.revokedAt === null);
+  const active = awards.filter((a) => a.revokedAt === null && awardCountsForSeason(a, currentSeason));
   const sumKind = (kind: PointAward["kind"]) => active.filter((a) => a.kind === kind).reduce((sum, a) => sum + a.points, 0);
   const gameBonus = sumKind("game_competition");
   const monthlyChampionBonus = sumKind("monthly_champion");
   const manualBonus = sumKind("manual");
+  const adjustments = sumKind("adjustment");
 
   return {
     eventPoints,
@@ -281,14 +312,27 @@ export function memberTotal(
     gameBonus,
     monthlyChampionBonus,
     manualBonus,
-    total: eventPoints + nsbeWeekBonus + gameBonus + monthlyChampionBonus + manualBonus,
+    adjustments,
+    total: eventPoints + nsbeWeekBonus + gameBonus + monthlyChampionBonus + manualBonus + adjustments,
   };
+}
+
+/**
+ * What a MEMBER-FACING surface shows for a total: never below zero. A public
+ * leaderboard reading "-6" looks like a bug, not a penalty. This is display
+ * only — the stored rows, the computed breakdown, ranking, and every admin
+ * surface keep the true (possibly negative) value.
+ */
+export function displayTotal(total: number): number {
+  return Math.max(0, total);
 }
 
 /**
  * Standard competition ranking (14, 14, 12 -> 1, 1, 3): sorts by points desc,
  * events desc, lastName asc as tiebreakers (ties share a rank by points
- * only), then assigns ranks. Generic so it can carry extra per-row data
+ * only), then assigns ranks. Points may be negative (an adjustment can take a
+ * member below zero) — that needs no special case: -2 sorts below 0 and two
+ * members on -2 share a rank like any other tie (0, -2, -2 -> 1, 2, 2). Generic so it can carry extra per-row data
  * (e.g. a breakdown) through ranking without a second implementation — the
  * one ranking implementation shared by both the member board and the
  * internal E-Board board.
@@ -327,7 +371,7 @@ function memberRows(
   attendance: AttendanceRecord[],
   members: Member[],
   currentSeason: string,
-  awards: Pick<PointAward, "email" | "kind" | "points" | "revokedAt">[],
+  awards: Pick<PointAward, "email" | "kind" | "points" | "revokedAt" | "season">[],
   groups: GroupBonusInput[],
   now: Date,
 ): Array<RankableRow & { breakdown: PointBreakdown }> {
@@ -335,7 +379,7 @@ function memberRows(
   return generalMembers.map((m) => {
     const memberAttendance = attendance.filter((a) => a.email === m.email);
     const memberAwards = awards.filter((a) => a.email === m.email);
-    const breakdown = memberTotal(m, memberAttendance, memberAwards, groups, now);
+    const breakdown = memberTotal(m, memberAttendance, memberAwards, groups, now, currentSeason);
     return {
       email: m.email,
       firstName: m.firstName,
@@ -360,7 +404,7 @@ export function computeStandings(
   attendance: AttendanceRecord[],
   members: Member[],
   currentSeason: string,
-  awards: Pick<PointAward, "email" | "kind" | "points" | "revokedAt">[],
+  awards: Pick<PointAward, "email" | "kind" | "points" | "revokedAt" | "season">[],
   groups: GroupBonusInput[],
   now: Date,
 ): Standing[] {
@@ -374,7 +418,7 @@ export function computeStandingsWithBreakdowns(
   attendance: AttendanceRecord[],
   members: Member[],
   currentSeason: string,
-  awards: Pick<PointAward, "email" | "kind" | "points" | "revokedAt">[],
+  awards: Pick<PointAward, "email" | "kind" | "points" | "revokedAt" | "season">[],
   groups: GroupBonusInput[],
   now: Date,
 ): Array<Standing & { breakdown: PointBreakdown }> {
@@ -412,6 +456,18 @@ export function rankWithLiveSelf(
   return ranked.find((s) => s.email.toLowerCase() === e)!.rank;
 }
 
+/**
+ * The board after applying point deltas to some of its rows — the adjustment
+ * impact preview's "projected rank" (see lib/repo.ts previewPointAdjustment).
+ * The same rankRows as computeStandings, so a projection cannot disagree with
+ * what the board will actually show once the adjustment is written. A delta
+ * for an email that isn't on the board is ignored: an ineligible or
+ * non-GENERAL member has no rank to project.
+ */
+export function projectStandings(standings: Standing[], deltas: ReadonlyMap<string, number>): Standing[] {
+  return rankRows(standings.map((s) => ({ ...s, points: s.points + (deltas.get(s.email.toLowerCase()) ?? 0) })));
+}
+
 export interface EboardStandingsConfig extends EboardScoringConfig {
   /** Config.EBOARD_REQUIRES_MEMBERSHIP — default false: officers doing chapter work aren't gated on a dues receipt. */
   requireMembership: boolean;
@@ -427,7 +483,9 @@ export interface EboardStandingsConfig extends EboardScoringConfig {
  * computeStandings' own "even a 0-point event still counts as attended"
  * behavior; "points" sums eboardAwardFor per row, reading each row's
  * embedded category — explicitly UNCHANGED by, and untouched by, Part 1-3's
- * tiers/NSBE-Week bonus/game bonus/monthly champion.
+ * tiers/NSBE-Week bonus/game bonus/monthly champion, and by point adjustments:
+ * this function never receives a PointAward, so no adjustment on an officer
+ * can move the internal board.
  */
 export function computeEboardStandings(
   attendance: AttendanceRecord[],

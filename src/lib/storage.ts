@@ -288,6 +288,36 @@ function selectBackupDriver(): BackupStorageDriver {
   return name === "s3" ? s3BackupDriver : localBackupDriver;
 }
 
+export type BackupStorageStatus = { configured: true; driver: "local" | "s3" } | { configured: false; reason: string };
+
+/**
+ * Whether a snapshot written right now has somewhere real to go — the gate on
+ * permanent deletion from the trash bin (see lib/repo.ts purgeTrashedMember).
+ * Nothing is destroyed without a backup behind it, so "not configured" is a
+ * hard stop there, never a warning.
+ *
+ * Read from the environment on every call rather than from the cached driver
+ * below: selectBackupDriver() throws on a bad setup, and an admin page asking
+ * "can I delete?" needs an answer, not an exception. The s3 branch checks the
+ * three variables a write actually needs; a missing one would otherwise only
+ * surface as a failed PUT halfway through a purge.
+ */
+export function backupStorageStatus(): BackupStorageStatus {
+  const raw = process.env.BACKUP_STORAGE_DRIVER;
+  const name = raw ?? "local";
+  if (!(VALID_BACKUP_STORAGE_DRIVERS as readonly string[]).includes(name)) {
+    return { configured: false, reason: `BACKUP_STORAGE_DRIVER "${raw}" is not a recognized driver.` };
+  }
+  if (name === "local") {
+    return isProductionRuntime()
+      ? { configured: false, reason: "BACKUP_STORAGE_DRIVER is not set to s3 in production." }
+      : { configured: true, driver: "local" };
+  }
+  const missing = ["BACKUP_S3_BUCKET", "BACKUP_S3_ACCESS_KEY_ID", "BACKUP_S3_SECRET_ACCESS_KEY"].filter((k) => !process.env[k]);
+  if (missing.length > 0) return { configured: false, reason: `${missing.join(", ")} not set.` };
+  return { configured: true, driver: "s3" };
+}
+
 let cachedBackupStorage: BackupStorageDriver | undefined;
 
 export const backupStorage: BackupStorageDriver = new Proxy({} as BackupStorageDriver, {

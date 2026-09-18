@@ -166,6 +166,8 @@ function makeAward(overrides: Partial<PointAward> = {}): PointAward {
     revokedAt: null,
     revokedById: "",
     revokeNote: "",
+    season: null,
+    relatedEventId: null,
     ...overrides,
   };
 }
@@ -321,27 +323,28 @@ describe("memberTotal / computeStandings — Part 4 scoring", () => {
       makeAward({ kind: "monthly_champion", points: 5, eventId: null, periodMonth: "2025-09" }),
       makeAward({ kind: "manual", points: 2, eventId: null }),
     ];
-    const breakdown = memberTotal({ role: "general" }, registrations, awards, groups, NOW);
+    const breakdown = memberTotal({ role: "general" }, registrations, awards, groups, NOW, SEASON);
     expect(breakdown).toEqual({
       eventPoints: 5,
       nsbeWeekBonus: 5,
       gameBonus: 1,
       monthlyChampionBonus: 5,
       manualBonus: 2,
+      adjustments: 0,
       total: 18,
     });
   });
 
   it("a revoked award never contributes", () => {
     const awards = [makeAward({ kind: "game_competition", points: 1, revokedAt: NOW })];
-    const breakdown = memberTotal({ role: "general" }, [], awards, [], NOW);
+    const breakdown = memberTotal({ role: "general" }, [], awards, [], NOW, SEASON);
     expect(breakdown.gameBonus).toBe(0);
     expect(breakdown.total).toBe(0);
   });
 
   it("editing a category's point value changes derived totals with no backfill — the SAME registration re-scores instantly", () => {
     const registration = makeAttendance({ category: makeCategory({ memberPoints: 3 }) });
-    const before = memberTotal({ role: "general" }, [registration], [], [], NOW);
+    const before = memberTotal({ role: "general" }, [registration], [], [], NOW, SEASON);
     expect(before.eventPoints).toBe(3);
 
     // No write happened to the registration — this just reflects the category's current value on re-read.
@@ -351,6 +354,7 @@ describe("memberTotal / computeStandings — Part 4 scoring", () => {
       [],
       [],
       NOW,
+      SEASON,
     );
     expect(afterEdit.eventPoints).toBe(5);
   });

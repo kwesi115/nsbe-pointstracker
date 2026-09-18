@@ -9,6 +9,7 @@ import type { PermissionName } from "@/lib/types";
 const LABEL: Record<PermissionName, string> = {
   verifications_write: "Verify dues/national/House (/admin/verifications)",
   attendance_write: "Add, remove & re-point attendance (/admin/attendance)",
+  points_write: "Adjust points (/admin/members)",
 };
 
 /** What each grant is FOR, in the terms an admin decides by — the attendance one hands out the ability to change the leaderboard after an event has closed, and should read that way. */
@@ -16,6 +17,7 @@ const DESCRIPTION: Record<PermissionName, string> = {
   verifications_write: "Review dues receipts, national membership, and House test screenshots.",
   attendance_write:
     "Award points after the fact — add a member who missed check-in on a closed event, correct a point value, or remove a registration. E-Board officers do NOT have this by default.",
+  points_write: "Add or revoke signed point adjustments that move a member on the leaderboard.",
 };
 
 const INITIAL_STATE: MemberActionState = { error: null };
@@ -25,6 +27,10 @@ export default function PermissionsPanel({ email, granted }: { email: string; gr
   const { show } = useToast();
   const has = (p: PermissionName) => granted.includes(p);
 
+  // points_write is deliberately not offered: its only surfaces (the Member
+  // Directory and a member's page) are ADMIN-only pages, so a grant to anyone
+  // else would enable nothing they could reach. It exists as its own domain so
+  // the adjustment actions check the right capability; see lib/access.ts.
   const permissions: PermissionName[] = ["verifications_write", "attendance_write"];
 
   return (

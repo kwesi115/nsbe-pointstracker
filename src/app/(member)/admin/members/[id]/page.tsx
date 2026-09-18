@@ -8,14 +8,28 @@ import AdminMembershipPanel from "@/components/admin/AdminMembershipPanel";
 import AdminNav from "@/components/admin/AdminNav";
 import AdminProfilePanel from "@/components/admin/AdminProfilePanel";
 import PermissionsPanel from "@/components/admin/PermissionsPanel";
+import PointsPanel from "@/components/admin/PointsPanel";
 import RoleSelect from "@/components/admin/RoleSelect";
+import TrashMemberButton from "@/components/admin/TrashMemberButton";
 import Badge from "@/components/ui/Badge";
 import PointsChart, { type PointsChartPoint } from "@/components/dashboard/PointsChart";
 import Table, { tdClass, thClass, Thead } from "@/components/ui/Table";
 import { normalizeEmail } from "@/lib/email";
 import { formatDate, formatDateTime, memberDisplayName } from "@/lib/format";
+import { isAllowed } from "@/lib/access";
 import { attendanceRate, isEligible, longestAttendanceStreak } from "@/lib/points";
-import { getAccountAccess, getActivePermissions, getAdminLog, getConfigValue, getCoreFormConfig, getEvents, getMemberById, getMemberHistory, resolveVerifierNames } from "@/lib/repo";
+import {
+  getAccountAccess,
+  getActivePermissions,
+  getAdminLog,
+  getConfigValue,
+  getCoreFormConfig,
+  getEvents,
+  getMemberById,
+  getMemberHistory,
+  getMemberPointsPanel,
+  resolveVerifierNames,
+} from "@/lib/repo";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -29,7 +43,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(orgId, id);
   if (!member) notFound();
 
-  const [history, events, adminLog, season, coreFormConfig, permissions, verifiers, access] = await Promise.all([
+  const [history, events, adminLog, season, coreFormConfig, permissions, verifiers, access, pointsPanel] = await Promise.all([
     getMemberHistory(orgId, member.email),
     getEvents(orgId),
     getAdminLog(orgId),
@@ -38,7 +52,9 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     getActivePermissions(orgId, member.email),
     resolveVerifierNames(orgId, member),
     getAccountAccess(orgId, member.email),
+    getMemberPointsPanel(orgId, member.email),
   ]);
+  const canAdjust = isAllowed(guard.access, { level: "permission", permission: "points_write" });
 
   const eventById = new Map(events.map((e) => [e.eventId, e]));
   const eligible = isEligible(member, season);
@@ -92,6 +108,19 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       <section className="flex flex-wrap items-center gap-3">
         <RoleSelect email={member.email} role={member.role} />
         <span className="text-sm text-muted">joined {formatDate(member.joinedAt)}</span>
+        <span className="ml-auto">
+          <TrashMemberButton email={member.email} />
+        </span>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Points</h2>
+        <PointsPanel
+          email={member.email}
+          panel={pointsPanel}
+          events={events.map((e) => ({ eventId: e.eventId, name: e.name }))}
+          canAdjust={canAdjust}
+        />
       </section>
 
       <section className="flex flex-col gap-3">

@@ -50,7 +50,7 @@ describe("the attendance table", () => {
       <ToastProvider>
         <AttendeeTable
           eventId="e1"
-          initialPage={{ rows: [ROW], nextCursor: null, total: 1, totalPoints: 3 }}
+          initialPage={{ rows: [ROW], nextCursor: null, total: 1, totalPoints: 3, trashedCount: 0 }}
           canWrite={false}
         />
       </ToastProvider>,
@@ -71,6 +71,7 @@ describe("the attendance table", () => {
             nextCursor: null,
             total: 1,
             totalPoints: 3,
+            trashedCount: 0,
           }}
           canWrite={false}
         />
@@ -85,7 +86,7 @@ describe("the attendance table", () => {
       <ToastProvider>
         <AttendeeTable
           eventId="e1"
-          initialPage={{ rows: [{ ...ROW, classification: "" }], nextCursor: null, total: 1, totalPoints: 3 }}
+          initialPage={{ rows: [{ ...ROW, classification: "" }], nextCursor: null, total: 1, totalPoints: 3, trashedCount: 0 }}
           canWrite={false}
         />
       </ToastProvider>,

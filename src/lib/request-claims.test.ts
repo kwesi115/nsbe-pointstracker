@@ -25,6 +25,10 @@ import { prisma } from "./prisma";
 import { createJoinCode, rotateJoinCodeById } from "./repo";
 import { Role } from "@/generated/prisma/enums";
 
+// Bcrypt at cost 12 per rotated join code — comfortably under 5s alone, but not under the
+// full suite's parallel database load. Same allowance as src/auth.test.ts.
+vi.setConfig({ testTimeout: 30_000 });
+
 vi.mock("next/cache", () => ({ revalidateTag: vi.fn() }));
 
 let orgId: string;

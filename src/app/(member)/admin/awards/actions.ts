@@ -43,7 +43,7 @@ export async function revokeAwardAction(_prev: AwardActionState, formData: FormD
 
 export interface ChampionPreviewResult {
   error: string | null;
-  champions: Array<{ email: string; firstName: string; lastName: string; count: number }>;
+  champions: Array<{ email: string; firstName: string; lastName: string; count: number; inTrash: boolean }>;
   alreadyMaterialized: string[];
 }
 
@@ -67,6 +67,7 @@ export async function calculateChampionsAction(month: string, points: number): P
   try {
     const result = await calculateMonthlyChampions(session.user.orgId, month, points, session.user.email);
     revalidatePath("/admin/awards");
+    revalidatePath("/admin/trash");
     return { error: null, ...result };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message, awarded: [], revoked: [], unchanged: false };

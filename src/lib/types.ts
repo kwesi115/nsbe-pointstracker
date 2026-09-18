@@ -9,7 +9,7 @@
 export type Role = "admin" | "eboard" | "general" | "guest";
 
 /** A narrow, revocable capability grantable to one member independent of role — see lib/permissions.ts and prisma/schema.prisma's PermissionGrant. */
-export type PermissionName = "verifications_write" | "attendance_write";
+export type PermissionName = "verifications_write" | "attendance_write" | "points_write";
 
 /**
  * WHY a caller was turned away from an admin surface — the shape lib/access.ts
@@ -44,7 +44,8 @@ export type FileKind = "resume" | "house_proof";
 
 export type GroupKind = "nsbe_week";
 
-export type AwardKind = "game_competition" | "monthly_champion" | "manual";
+/** "adjustment" is the only kind whose points may be negative — see lib/repo.ts createPointAdjustment. */
+export type AwardKind = "game_competition" | "monthly_champion" | "manual" | "adjustment";
 
 // No "live"/"closed" — whether an event is open is derived from the clock (see lib/points.ts isOpen).
 export type EventStatus = "draft" | "scheduled" | "canceled";
@@ -273,6 +274,10 @@ export interface PointAward {
   revokedAt: Date | null;
   revokedById: string;
   revokeNote: string;
+  /** Config.SEASON at creation — set only for "adjustment", which counts only while it matches the current season (see lib/points.ts awardCountsForSeason). */
+  season: string | null;
+  /** The event an "adjustment" relates to, if any. Informational only — never part of any count. */
+  relatedEventId: string | null;
 }
 
 export interface Event {
@@ -331,13 +336,19 @@ export interface AttendanceRecord {
   category: Pick<EventCategory, "memberPoints" | "eboardEligible" | "countsForMonthly">;
 }
 
-/** eventPoints/nsbeWeekBonus/gameBonus/monthlyChampionBonus/manualBonus sum to total — see lib/points.ts memberTotal. */
+/**
+ * eventPoints/nsbeWeekBonus/gameBonus/monthlyChampionBonus/manualBonus/adjustments
+ * sum to total — see lib/points.ts memberTotal. adjustments may be negative, and
+ * so may total: this is the TRUE value. Member-facing surfaces render
+ * displayTotal(total) instead (see lib/points.ts), admin surfaces render total.
+ */
 export interface PointBreakdown {
   eventPoints: number;
   nsbeWeekBonus: number;
   gameBonus: number;
   monthlyChampionBonus: number;
   manualBonus: number;
+  adjustments: number;
   total: number;
 }
 
