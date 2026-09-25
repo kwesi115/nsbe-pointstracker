@@ -33,6 +33,7 @@ export const PERMISSION_LABEL: Record<PermissionName, string> = {
   verifications_write: "Membership audit",
   attendance_write: "Attendance editing",
   points_write: "Point adjustments",
+  files_read: "Resume access",
 };
 
 /**
@@ -63,11 +64,23 @@ export const PERMISSION_LABEL: Record<PermissionName, string> = {
  *                        an attendance typo is not thereby trusted to move
  *                        people on the leaderboard, and a single grant must
  *                        not hand out both.
+ *
+ *   files_read           ADMIN only. Reads other members' uploaded documents
+ *                        in bulk — /admin/resumes builds a zip of every
+ *                        consenting member's resume. Pointedly NOT held by
+ *                        EBOARD the way verifications_write is: an officer
+ *                        opening ONE House screenshot mid-review (see
+ *                        repo.canAccessFile, which is a different and much
+ *                        narrower rule) is ordinary work; walking off with
+ *                        every resume on the roster is not. It exists as a
+ *                        grant so the recruiting chair can hold exactly this
+ *                        surface without being made an admin.
  */
 const PERMISSION_ROLES: Record<PermissionName, readonly Role[]> = {
   verifications_write: ["admin", "eboard"],
   attendance_write: ["admin"],
   points_write: ["admin"],
+  files_read: ["admin"],
 };
 
 /** True when `role` holds `permission` by virtue of the role alone. The one implementation — lib/permissions.ts defers to it rather than re-deriving a role comparison. */
@@ -167,6 +180,21 @@ export function denialMessage(denial: Denial): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * The resume bundle's requirement, named once.
+ *
+ * Unlike every other surface, this one is enforced in three places — the page
+ * guard, the server action that records the download, and the route that
+ * streams the bytes — and a bundle of members' personal documents is the last
+ * thing that should be protected by three hand-copied object literals. The
+ * ADMIN_SURFACES row below points at this same constant.
+ */
+export const RESUME_BUNDLE_ACCESS = {
+  level: "permission",
+  permission: "files_read",
+  feature: "exports",
+} as const satisfies Requirement;
+
+/**
  * Every /admin surface that appears in the cross-nav, in nav order, with the
  * requirement its page enforces. `/admin/exports` keeps its row while
  * EXPORTS_ENABLED is false — the feature flag hides it, so flipping the flag
@@ -185,6 +213,7 @@ export const ADMIN_SURFACES = [
   { href: "/admin/groups", label: "NSBE Week groups", requires: { level: "admin" } },
   { href: "/admin/awards", label: "Bonus awards", requires: { level: "admin" } },
   { href: "/admin/exports", label: "Exports", requires: { level: "eboard", feature: "exports" } },
+  { href: "/admin/resumes", label: "Resume bundle", requires: RESUME_BUNDLE_ACCESS },
   { href: "/admin/settings", label: "Settings", requires: { level: "admin" } },
   { href: "/admin/qr", label: "QR code", requires: { level: "eboard" } },
   { href: "/admin/join-codes", label: "Join codes", requires: { level: "admin" } },

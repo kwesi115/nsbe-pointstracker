@@ -15,6 +15,7 @@ import {
   denialMessage,
   isAllowed,
   PERMISSION_LABEL,
+  RESUME_BUNDLE_ACCESS,
   visibleAdminNav,
 } from "./access";
 import type { Role } from "./types";
@@ -42,6 +43,30 @@ describe("denialFor — role levels", () => {
 
   it("turns an EBOARD away from an ADMIN-only surface, naming it as admin-only", () => {
     expect(denialFor(accessFor("eboard"), { level: "admin" })).toEqual({ kind: "admin" });
+  });
+
+  // files_read is deliberately NOT one of the capabilities a role carries for
+  // free — see PERMISSION_ROLES. An officer gets it by grant or not at all.
+  it("turns a GENERAL member and an ungranted EBOARD officer away from files_read alike", () => {
+    for (const role of ["general", "eboard"] as const) {
+      expect(denialFor(accessFor(role, { exports: true }), RESUME_BUNDLE_ACCESS)).toEqual({
+        kind: "permission",
+        permission: "files_read",
+      });
+    }
+    expect(denialFor(accessFor("admin", { exports: true }), RESUME_BUNDLE_ACCESS)).toBeNull();
+    expect(
+      denialFor(accessFor("eboard", { exports: true, permissions: ["files_read"] }), RESUME_BUNDLE_ACCESS),
+    ).toBeNull();
+  });
+
+  // The role check answers first, so an ungranted officer never learns whether
+  // the org has exports switched on.
+  it("reports the missing grant rather than the flag when a caller fails both", () => {
+    expect(denialFor(accessFor("eboard", { exports: false }), RESUME_BUNDLE_ACCESS)).toEqual({
+      kind: "permission",
+      permission: "files_read",
+    });
   });
 
   it("lets an EBOARD through eboard-level and grant-level surfaces without holding the grant", () => {
@@ -98,9 +123,13 @@ describe("denialFor — feature flags", () => {
 });
 
 describe("visibleAdminNav — the primary control", () => {
-  it("shows an ADMIN everything except the flagged-off Exports", () => {
-    expect(hrefs(accessFor("admin"))).not.toContain("/admin/exports");
-    expect(hrefs(accessFor("admin")).length).toBe(ADMIN_SURFACES.length - 1);
+  it("shows an ADMIN everything except the two surfaces the flagged-off Exports switch gates", () => {
+    const admin = hrefs(accessFor("admin"));
+    expect(admin).not.toContain("/admin/exports");
+    expect(admin).not.toContain("/admin/resumes");
+    expect(admin.length).toBe(ADMIN_SURFACES.length - 2);
+    // Both come back together, because both are gated on the same flag.
+    expect(hrefs(accessFor("admin", { exports: true })).length).toBe(ADMIN_SURFACES.length);
   });
 
   // The nav bug this whole change exists to fix: an EBOARD officer was being
@@ -115,6 +144,23 @@ describe("visibleAdminNav — the primary control", () => {
 
   it("shows a GENERAL member with one grant only that item", () => {
     expect(hrefs(accessFor("general", { permissions: ["verifications_write"] }))).toEqual(["/admin/verifications"]);
+  });
+
+  /**
+   * The resume bundle is the one surface where a grant to an EBOARD officer is
+   * the point: the recruiting chair needs it and nobody else does. So it must
+   * be invisible to an officer who does not hold it, and visible to one who
+   * does — unlike /admin/verifications, which every officer holds by role.
+   */
+  it("hides the resume bundle from an EBOARD officer without the grant, and shows it with one", () => {
+    expect(hrefs(accessFor("eboard", { exports: true }))).not.toContain("/admin/resumes");
+    expect(hrefs(accessFor("eboard", { exports: true, permissions: ["files_read"] }))).toContain("/admin/resumes");
+  });
+
+  it("still hides the resume bundle from a granted officer while exports are switched off", () => {
+    expect(hrefs(accessFor("eboard", { exports: false, permissions: ["files_read"] }))).not.toContain(
+      "/admin/resumes",
+    );
   });
 
   it("shows a GENERAL member with no grant nothing at all", () => {
@@ -136,6 +182,7 @@ describe("visibleAdminNav — the primary control", () => {
       accessFor("eboard"),
       accessFor("general", { permissions: ["verifications_write"] }),
       accessFor("general"),
+      accessFor("eboard", { exports: true, permissions: ["files_read"] }),
       accessFor("guest", { exports: true }),
     ];
     for (const access of cases) {

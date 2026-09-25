@@ -1,0 +1,14 @@
+-- Adds the FILES_READ capability (see prisma/schema.prisma enum Permission,
+-- lib/access.ts PERMISSION_ROLES).
+--
+-- It gates /admin/resumes -- the bulk resume export -- alongside the org's
+-- EXPORTS_ENABLED switch. Held outright only by ADMIN, deliberately NOT by
+-- EBOARD: reviewing a dues receipt is ordinary officer work, downloading a zip
+-- of every member's resume is not. The grant exists so a recruiting chair can
+-- be given that one surface without being promoted to admin, and so revoking
+-- it takes effect on their very next request.
+--
+-- Postgres 12+ permits ALTER TYPE ... ADD VALUE inside a transaction block
+-- (scripts/db-apply-sql.ts wraps this file in one) as long as the new value is
+-- not USED in the same transaction. Nothing below uses it.
+ALTER TYPE "Permission" ADD VALUE IF NOT EXISTS 'FILES_READ';

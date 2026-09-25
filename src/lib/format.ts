@@ -6,7 +6,7 @@
 
 import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
-import { CLASSIFICATION_OPTIONS } from "./core-form";
+import { CLASSIFICATION_OPTIONS, OTHER_MAJOR } from "./core-form";
 import type { Classification } from "./types";
 
 const TIME_ZONE = "America/New_York";
@@ -78,4 +78,28 @@ export function memberDisplayName(firstName: string, lastName: string, email: st
 export function formatClassification(value: Classification | "" | null | undefined): string {
   if (!value) return "";
   return CLASSIFICATION_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+/**
+ * A major for display: the stored value, unless it is the "Other" sentinel, in
+ * which case the free-text answer the member actually typed.
+ *
+ * Same reasoning as formatClassification above — the pair (major, majorOther)
+ * is only ever meaningful together, and every surface that rendered `major`
+ * raw showed a literal "Other" where a major belonged.
+ */
+export function formatMajor(major: string, majorOther: string): string {
+  return (major === OTHER_MAJOR ? majorOther : major) || "";
+}
+
+/**
+ * A file size for a person: "148 KB", "2.4 MB". Decimal units (1000, not
+ * 1024) because that is what every operating system's file browser shows, and
+ * a resume listed as 2.4 MB here should not read as 2.3 MB after download.
+ */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000 * 1000) return `${Math.round(bytes / 1000)} KB`;
+  return `${(bytes / (1000 * 1000)).toFixed(1)} MB`;
 }

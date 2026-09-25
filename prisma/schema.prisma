@@ -101,6 +101,12 @@ enum Permission {
   // fixing an attendance typo and moving someone up or down the leaderboard by
   // fiat are different trusts (see lib/access.ts PERMISSION_ROLES).
   POINTS_WRITE
+  // Held outright only by ADMIN, and the one grant that is genuinely useful to
+  // hand to an E-Board officer: a recruiting/PCI chair needs the resume bundle
+  // (/admin/resumes) and nothing else on it. NOT folded into
+  // VERIFICATIONS_WRITE, which every officer holds by role -- that would give
+  // the whole E-Board the ability to walk off with every member's resume.
+  FILES_READ
 }
 
 // A chapter. One row for launch ("howard-nsbe"); everything org-scoped below

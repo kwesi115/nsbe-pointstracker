@@ -219,6 +219,8 @@ function permissionToDb(p: PermissionName): DbPermission {
       return DbPermission.ATTENDANCE_WRITE;
     case "points_write":
       return DbPermission.POINTS_WRITE;
+    case "files_read":
+      return DbPermission.FILES_READ;
   }
 }
 
@@ -230,6 +232,8 @@ function permissionFromDb(p: DbPermission): PermissionName {
       return "verifications_write";
     case DbPermission.POINTS_WRITE:
       return "points_write";
+    case DbPermission.FILES_READ:
+      return "files_read";
   }
 }
 
@@ -6697,4 +6701,416 @@ export async function runTrashSweep(
     detail: `${result.purged.length} expired item(s) permanently deleted, ${result.failures.length} failed`,
   });
   return { ran: true, ...result };
+}
+
+// ---------------------------------------------------------------------------
+// Resume bundle (/admin/resumes) — the recruiter-facing export.
+//
+// Four things live here:
+//
+//   getResumeRosterCounts      the headline "38 of 52", over the whole roster
+//   getResumeRoster            the list, filtered, WITHOUT storage keys
+//   getResumeBundleRows        the same rows WITH storage keys, consent-only
+//   createResumeBundleRequest  the AdminLog entry + the ticket the route needs
+//
+// The list and the bundle are deliberately different queries rather than one
+// with a flag. The list shows every member who has a resume on file INCLUDING
+// the ones with no consent timestamp, because an admin needs to see why the
+// bundle is smaller than the roster. The bundle sees only the consenting ones,
+// and is the only thing that ever touches a storageKey.
+//
+// GUEST rows are excluded from both, and from the denominator. A guest pass
+// holder (see registerGuest) is not a member, has no /account and no signup
+// wizard, and therefore never has a resume — counting them would only inflate
+// the "of 52" into a number that doesn't match the chapter.
+// ---------------------------------------------------------------------------
+
+export interface ResumeFilters {
+  q?: string;
+  classification?: Classification | "all";
+  major?: string;
+  /** A House NAME as stored on User.house (see lib/houses.ts), or "none" for members with no House on file. */
+  house?: string;
+  eligible?: MemberTriFilter;
+}
+
+/** Everything the resume list and the bundle agree on: a live, non-guest member of this org with a resume attached. */
+function resumeBaseWhere(orgId: string): Prisma.UserWhereInput {
+  return { orgId, ...LIVE, role: { not: DbRole.GUEST }, resumeFileId: { not: null } };
+}
+
+/**
+ * The ONE translation of the resume page's filter bar into SQL — same contract
+ * as memberWhere above, and for the same reason: the count in the header and
+ * the rows in the list have to be the same set, and "Download all" has to mean
+ * "everything matching these filters", not "everything on screen".
+ */
+function resumeWhere(orgId: string, filters: ResumeFilters, currentSeason: string): Prisma.UserWhereInput {
+  const q = (filters.q ?? "").trim();
+  const and: Prisma.UserWhereInput[] = [];
+
+  if (filters.classification && filters.classification !== "all") {
+    and.push({ classification: classificationToDb(filters.classification) });
+  }
+  if (filters.major && filters.major !== "all") and.push({ major: filters.major });
+
+  // "none" is the actionable case: a member with a resume but no House is
+  // someone a House-scoped recruiter bundle would otherwise silently miss.
+  if (filters.house === "none") and.push({ OR: [{ house: null }, { house: "" }] });
+  else if (filters.house && filters.house !== "all") and.push({ house: filters.house });
+
+  // isEligible's exact conditions, same as memberWhere — an unset SEASON
+  // matches nobody rather than letting "" match everyone.
+  const eligibleWhere: Prisma.UserWhereInput = currentSeason
+    ? { duesPaidReported: true, nationalMemberReported: true, membershipSeason: currentSeason }
+    : { id: { in: [] } };
+  and.push(...tri(filters.eligible, eligibleWhere));
+
+  if (q) {
+    and.push({
+      OR: [
+        { firstName: { contains: q, mode: "insensitive" } },
+        { lastName: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+        { major: { contains: q, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  return { ...resumeBaseWhere(orgId), AND: and };
+}
+
+export interface ResumeRosterCounts {
+  /** Every live, non-guest member — the "of 52". */
+  members: number;
+  /** ...of whom this many have a resume attached — the "38". */
+  withResume: number;
+  /** ...of whom this many also carry a consent timestamp. The bundle's real size. */
+  withConsent: number;
+}
+
+/**
+ * The headline numbers, UNFILTERED — this is the sentence an E-Board member
+ * opens the page for, and it has to describe the chapter, not whatever filter
+ * happens to be applied. The filtered counts come from getResumeRoster's rows.
+ */
+export async function getResumeRosterCounts(orgId: string): Promise<ResumeRosterCounts> {
+  const live: Prisma.UserWhereInput = { orgId, ...LIVE, role: { not: DbRole.GUEST } };
+  const [members, withResume, withConsent] = await Promise.all([
+    prisma.user.count({ where: live }),
+    prisma.user.count({ where: { ...live, resumeFileId: { not: null } } }),
+    prisma.user.count({ where: { ...live, resumeFileId: { not: null }, resumeConsentAt: { not: null } } }),
+  ]);
+  return { members, withResume, withConsent };
+}
+
+/** One row of the resume list. No storageKey — nothing outside the bundle builder gets one (see the UploadedFile section above). */
+export interface ResumeRosterRow {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  classification: Classification | "";
+  major: string;
+  majorOther: string;
+  house: string;
+  eligible: boolean;
+  resumeFileId: string;
+  resumeUpdatedAt: Date | null;
+  /** Null means no consent on file — shown in the list, excluded from every bundle. */
+  resumeConsentAt: Date | null;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+/**
+ * The filtered list, newest upload first.
+ *
+ * Deliberately NOT cursor-paginated like getMembersPage, which sits directly
+ * above this in spirit. The roster only ever grows and is read a page at a
+ * time; this list is bounded twice over — by "has a resume attached" (113 of
+ * 270 on the live roster) and by the bundle cap above it — and its entire
+ * purpose is to be scanned and multi-selected in one pass. A "Show more"
+ * button on the page where someone ticks forty boxes would be a defect, not a
+ * safeguard.
+ *
+ * `User.resumeFileId` is a plain column rather than a relation (see
+ * prisma/schema.prisma), so the UploadedFile rows are fetched in a second
+ * query and joined in memory. A member whose file row has gone missing
+ * entirely still appears, with a zero size — the list's job is to account for
+ * every member with a resume on file, the broken ones included.
+ */
+export async function getResumeRoster(orgId: string, filters: ResumeFilters): Promise<ResumeRosterRow[]> {
+  const currentSeason = await getConfigValue(orgId, "SEASON", "");
+  const users = await prisma.user.findMany({
+    where: resumeWhere(orgId, filters, currentSeason),
+    orderBy: [{ resumeUpdatedAt: "desc" }, { lastName: "asc" }, { id: "asc" }],
+  });
+  if (users.length === 0) return [];
+
+  const fileIds = users.map((u) => u.resumeFileId).filter((id): id is string => Boolean(id));
+  const files = await prisma.uploadedFile.findMany({
+    where: { orgId, id: { in: fileIds } },
+    select: { id: true, originalName: true, mimeType: true, sizeBytes: true },
+  });
+  const fileById = new Map(files.map((f) => [f.id, f]));
+
+  return users.map((u) => {
+    const m = userToMember(u);
+    const file = u.resumeFileId ? fileById.get(u.resumeFileId) : undefined;
+    return {
+      id: m.id,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      email: m.email,
+      classification: m.classification,
+      major: m.major,
+      majorOther: m.majorOther,
+      house: m.house,
+      eligible: isEligible(m, currentSeason),
+      resumeFileId: u.resumeFileId ?? "",
+      resumeUpdatedAt: m.resumeUpdatedAt,
+      resumeConsentAt: m.resumeConsentAt,
+      originalName: file?.originalName ?? "",
+      mimeType: file?.mimeType ?? "",
+      sizeBytes: file?.sizeBytes ?? 0,
+    };
+  });
+}
+
+/**
+ * WHICH resumes a bundle covers: an explicit set of member ids, or everything
+ * matching the filters that were on screen.
+ *
+ * "all" carries the filters rather than resolving to ids at click time
+ * deliberately — it is what the admin actually asked for, it is what reads
+ * back out of the AdminLog months later, and it is a few hundred bytes rather
+ * than a few hundred ids.
+ */
+export type ResumeBundleSelection =
+  | { kind: "selected"; memberIds: string[] }
+  | { kind: "all"; filters: ResumeFilters };
+
+/**
+ * The rows a bundle will actually contain: consenting members only, ordered by
+ * surname (which is the order a recruiter sorts the extracted folder into
+ * anyway, so the manifest and the folder agree).
+ *
+ * The consent filter is applied HERE, in SQL, not by the caller — it is the
+ * rule the whole feature turns on, and leaving a caller to remember it is how
+ * a resume nobody consented to share ends up in a recruiter's inbox. A trashed
+ * member is excluded by resumeBaseWhere's LIVE for the same reason.
+ */
+/**
+ * One consenting member and the file behind them — the ONLY shape this module
+ * hands a `storageKey` to, and only to lib/export/resume-bundle.ts, which
+ * streams the bytes and never returns the key to anything else.
+ */
+export interface ResumeBundleRow {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  classification: Classification | "";
+  major: string;
+  majorOther: string;
+  house: string;
+  nationalMemberReported: boolean | null;
+  nationalVerifiedAt: Date | null;
+  nationalRevokedAt: Date | null;
+  resumeUpdatedAt: Date | null;
+  resumeConsentAt: Date | null;
+  storageKey: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export async function getResumeBundleRows(
+  orgId: string,
+  selection: ResumeBundleSelection,
+): Promise<ResumeBundleRow[]> {
+  const currentSeason = await getConfigValue(orgId, "SEASON", "");
+  const where: Prisma.UserWhereInput =
+    selection.kind === "all"
+      ? resumeWhere(orgId, selection.filters, currentSeason)
+      : { ...resumeBaseWhere(orgId), id: { in: selection.memberIds } };
+
+  const users = await prisma.user.findMany({
+    where: { AND: [where, { resumeConsentAt: { not: null } }] },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
+  });
+  if (users.length === 0) return [];
+
+  const fileIds = users.map((u) => u.resumeFileId).filter((id): id is string => Boolean(id));
+  const files = await prisma.uploadedFile.findMany({
+    where: { orgId, id: { in: fileIds } },
+    select: { id: true, storageKey: true, originalName: true, mimeType: true, sizeBytes: true },
+  });
+  const fileById = new Map(files.map((f) => [f.id, f]));
+
+  const rows: ResumeBundleRow[] = [];
+  for (const u of users) {
+    const file = u.resumeFileId ? fileById.get(u.resumeFileId) : undefined;
+    // No UploadedFile row at all is a different failure from a missing blob:
+    // there is nothing to fetch and nothing to name, so it cannot even become
+    // a manifest row. Left out and logged rather than faked.
+    if (!file) {
+      console.error("resume bundle: member has resumeFileId with no UploadedFile row", {
+        memberId: u.id,
+        resumeFileId: u.resumeFileId,
+      });
+      continue;
+    }
+    const m = userToMember(u);
+    rows.push({
+      id: m.id,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      email: m.email,
+      classification: m.classification,
+      major: m.major,
+      majorOther: m.majorOther,
+      house: m.house,
+      nationalMemberReported: m.nationalMemberReported,
+      nationalVerifiedAt: m.nationalVerifiedAt,
+      nationalRevokedAt: m.nationalRevokedAt,
+      resumeUpdatedAt: m.resumeUpdatedAt,
+      resumeConsentAt: m.resumeConsentAt,
+      storageKey: file.storageKey,
+      originalName: file.originalName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+    });
+  }
+  return rows;
+}
+
+/** The RequestClaim scope both halves of a download agree on — see createResumeBundleRequest. */
+const RESUME_BUNDLE_SCOPE = "resume_bundle";
+
+/**
+ * How long the streaming route will honour a ticket the action minted. Long
+ * enough for a slow client to start the download, short enough that a ticket
+ * sitting in a browser's history is not a standing entitlement to the bundle.
+ */
+export const RESUME_BUNDLE_TICKET_TTL_MS = 5 * 60 * 1000;
+
+/** One bundle's scope in a sentence — the AdminLog detail column, and the confirm dialog's description. */
+export function describeResumeSelection(selection: ResumeBundleSelection): string {
+  if (selection.kind === "selected") return `${selection.memberIds.length} hand-picked member(s)`;
+  const f = selection.filters;
+  const parts: string[] = [];
+  if (f.q?.trim()) parts.push(`search "${f.q.trim()}"`);
+  if (f.classification && f.classification !== "all") parts.push(`classification=${f.classification}`);
+  if (f.major && f.major !== "all") parts.push(`major=${f.major}`);
+  if (f.house && f.house !== "all") parts.push(`house=${f.house}`);
+  if (f.eligible && f.eligible !== "all") parts.push(`eligible=${f.eligible}`);
+  return parts.length > 0 ? `all matching ${parts.join(", ")}` : "every member with consent on file, no filters";
+}
+
+export interface ResumeBundleTicket {
+  selection: ResumeBundleSelection;
+  /** How many resumes the AdminLog entry was written for. */
+  count: number;
+}
+
+/**
+ * What a claim row carries in its `target`, so the route can reconstruct the
+ * exact request the log entry describes without trusting the browser for any
+ * of it.
+ *
+ * The RequestClaim row is never pruned, which makes this the durable record of
+ * WHICH members a hand-picked bundle covered — the AdminLog detail deliberately
+ * says "12 hand-picked member(s)" rather than pasting twelve ids into a column
+ * an admin has to read, and the two rows share a timestamp.
+ */
+interface ResumeBundleClaim {
+  actor: string;
+  selection: ResumeBundleSelection;
+}
+
+/**
+ * Authorize, RECORD, and hand back a ticket the streaming route will accept.
+ *
+ * `count` comes from the caller rather than being re-queried here: the action
+ * has already resolved the rows to check them against the bundle limits, and a
+ * second identical query would only create the chance of the logged number and
+ * the streamed number disagreeing.
+ *
+ * The AdminLog entry is written here rather than in the route on purpose: this
+ * is where every other admin mutation in this file writes one, inside the same
+ * transaction that claims the request token, so "the bundle was logged" and
+ * "the bundle was authorized" cannot come apart. The route then streams only
+ * what a ticket names, so there is no path to the bytes that skips the log.
+ *
+ * The selection is stored ON the claim row rather than re-sent by the client,
+ * which is what makes the logged filters provably the filters that got
+ * streamed — the route reads the scope out of the same row the log entry was
+ * written beside, and never trusts a second copy from the browser.
+ *
+ * Claiming the token is the server-side half of ConfirmDialog's double-submit
+ * guard (see claimRequestToken): the dialog mints one token per opening, so a
+ * double click writes one log entry and produces one zip, while a deliberate
+ * second download gets its own token, its own entry and its own zip — which is
+ * correct, because a second copy really did leave the system.
+ *
+ * The entry is written BEFORE a byte is streamed, so a download that dies
+ * halfway still leaves a record. Over-reporting is the safe direction here:
+ * the log answering "who asked for what" matters more than it answering "who
+ * successfully received it", and a partially delivered zip is still a zip that
+ * partially left.
+ */
+export async function createResumeBundleRequest(
+  orgId: string,
+  input: { actor: string; requestToken: string; selection: ResumeBundleSelection; count: number },
+): Promise<ResumeBundleTicket> {
+  const detail = `${input.count} resume(s) — ${describeResumeSelection(input.selection)}`;
+
+  await prisma.$transaction(async (tx) => {
+    const claim: ResumeBundleClaim = { actor: normalizeEmail(input.actor), selection: input.selection };
+    await claimRequestToken(tx, orgId, RESUME_BUNDLE_SCOPE, input.requestToken, JSON.stringify(claim));
+    await logAdminAction(tx, orgId, {
+      actor: input.actor,
+      action: "download_resume_bundle",
+      target: "resumes",
+      detail,
+    });
+  });
+
+  return { selection: input.selection, count: input.count };
+}
+
+/**
+ * The ticket side of the above: the selection this token was logged for, or
+ * null when there is no such claim, it has gone stale, or it belongs to a
+ * different actor. A route that gets null must refuse — an unticketed download
+ * is an unlogged one.
+ *
+ * The actor check is what keeps the log honest rather than merely present. Two
+ * people can hold files_read; without it, one of them redeeming the other's
+ * token would produce a zip whose only record names the wrong person, which is
+ * a worse outcome than no record at all.
+ */
+export async function getResumeBundleTicket(
+  orgId: string,
+  token: string,
+  actor: string,
+): Promise<ResumeBundleSelection | null> {
+  if (!token) return null;
+  const row = await prisma.requestClaim.findUnique({
+    where: { orgId_scope_token: { orgId, scope: RESUME_BUNDLE_SCOPE, token } },
+    select: { target: true, createdAt: true },
+  });
+  if (!row?.target) return null;
+  if (Date.now() - row.createdAt.getTime() > RESUME_BUNDLE_TICKET_TTL_MS) return null;
+  let claim: ResumeBundleClaim;
+  try {
+    claim = JSON.parse(row.target) as ResumeBundleClaim;
+  } catch {
+    return null;
+  }
+  if (claim.actor !== normalizeEmail(actor)) return null;
+  return claim.selection ?? null;
 }

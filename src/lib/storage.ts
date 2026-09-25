@@ -30,6 +30,18 @@ export interface StoredFile {
 export interface StorageDriver {
   put(input: { buffer: Buffer; kind: FileKind; extension: string }): Promise<StoredFile>;
   read(storageKey: string): Promise<Buffer>;
+  /**
+   * The same bytes, in chunks, for a caller that must not hold a whole file at
+   * once — today that is only the bulk resume bundle (lib/export/resume-bundle.ts),
+   * which reads many files back to back and pipes each straight into a zip.
+   * read() stays the right call for everything that needs the bytes as a unit
+   * (GET /api/files/[id] sets a Content-Length from them).
+   *
+   * Throws the same way read() does when the object is gone — the bundle
+   * catches that per file and records it in the manifest rather than failing
+   * the whole download.
+   */
+  readStream(storageKey: string): Promise<AsyncIterable<Uint8Array>>;
   delete(storageKey: string): Promise<void>;
 }
 
@@ -60,6 +72,16 @@ const localDiskDriver: StorageDriver = {
     if (!resolved.startsWith(UPLOADS_ROOT)) throw new Error("Invalid storage key");
     return readFile(resolved);
   },
+  async readStream(storageKey) {
+    const resolved = path.resolve(UPLOADS_ROOT, storageKey);
+    if (!resolved.startsWith(UPLOADS_ROOT)) throw new Error("Invalid storage key");
+    const { createReadStream } = await import("node:fs");
+    const { stat } = await import("node:fs/promises");
+    // stat first so a missing file rejects HERE, where the bundle can catch it
+    // per entry, rather than mid-iteration once the zip entry is already open.
+    await stat(resolved);
+    return createReadStream(resolved);
+  },
   async delete(storageKey) {
     const resolved = path.resolve(UPLOADS_ROOT, storageKey);
     if (!resolved.startsWith(UPLOADS_ROOT)) throw new Error("Invalid storage key");
@@ -71,6 +93,25 @@ const localDiskDriver: StorageDriver = {
     }
   },
 };
+
+/**
+ * A web ReadableStream as an async iterable. Node 20+ makes ReadableStream
+ * itself async-iterable, but @vercel/blob types its `stream` as the plain web
+ * type, and a reader loop is portable across both without a cast that would
+ * lie about the runtime.
+ */
+async function* webStreamToAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      if (value) yield value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 /**
  * `access: "private"` — resumes carry addresses/phone numbers, House
@@ -93,6 +134,13 @@ const vercelBlobDriver: StorageDriver = {
     const result = await get(storageKey, { access: "private" });
     if (!result) throw new Error(`Blob not found: ${storageKey}`);
     return Buffer.from(await new Response(result.stream).arrayBuffer());
+  },
+  /** get() already hands back a stream — read() above is the one that buffers it. This just doesn't. */
+  async readStream(storageKey) {
+    const { get } = await import("@vercel/blob");
+    const result = await get(storageKey, { access: "private" });
+    if (!result) throw new Error(`Blob not found: ${storageKey}`);
+    return webStreamToAsyncIterable(result.stream as ReadableStream<Uint8Array>);
   },
   async delete(storageKey) {
     const { del } = await import("@vercel/blob");
